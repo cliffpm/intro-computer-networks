@@ -6,7 +6,7 @@ import commpy as comm
 import commpy.channelcoding.convcode as check
 from pip import main
 import matplotlib.pyplot as plt
- 
+  
  
 
 def WifiReceiver(input_stream, level):
@@ -39,6 +39,29 @@ def WifiReceiver(input_stream, level):
     if level >= 1:
         #Input Interleaved bits + Encoded Length
         #Output Deinterleaved bits
+
+        # goal : deinterleave bits using given information and encoded length. known that the 
+        # permutation is row-column interleaving so this is simply a matrix transpose
+
+        # first step get the 128 bit (1 ofdm symbol) block
+        # which represents the encoded length
+        encoded_length_block = input_stream[0:2*nfft]
+        encoded_length_block = np.trim_zeros(encoded_length_block, 'f')
+        # now we are ensured theres a perfect window of 3 for each group of repeated 3 bits
+        decoded_length = []
+        for i in range(0,len(encoded_length_block),3):
+            decoded_length.append(str(np.bincount(encoded_length_block[i:i+3]).argmax()))
+
+        length = int(''.join(decoded_length), 2)
+        
+        # next step is to deinterleave the bits
+        # num_blocks = (len(input_stream[2*nfft:])) // (2*nfft)
+
+        for i in range(2*nfft, len(input_stream), 2*nfft):
+            pass
+
+
+
         return begin_zero_padding, message, length
 
     raise Exception("Error: Unsupported level")

@@ -10,12 +10,12 @@ def WifiTransmitter(*args):
         # Arg1 = Message, Arg2 = Level, Arg3 = SNR
         message = args[0]
         level=4
-        snr=np.Inf
+        snr=np.inf
     elif len(args)<3:
         # Arg1 = Message, Arg2 = Level, Arg3 = SNR
         message=args[0]
         level=int(args[1])
-        snr=np.Inf
+        snr=np.inf
     elif len(args)<4:
         # Arg1 = Message, Arg2 = Level, Arg3 = SNR
         message=args[0]
@@ -36,16 +36,17 @@ def WifiTransmitter(*args):
     cc1 = check.Trellis(np.array([3]),np.array([[0o7,0o5]]))
     if level >= 1:
         bits = np.unpackbits(np.array([ord(c) for c in message], dtype=np.uint8))
-        bits = np.pad(bits, (0, 2*nfft-len(bits)%(2*nfft)),'constant')
+        bits = np.pad(bits, (0, 2*nfft-len(bits)%(2*nfft)),'constant') # each OFDM symbol is 2 * nfft = 128 bits
+        # 2 * nfft means 2 bits per every 64 subcarrier lanes = 128 bits total per OFDM symbol
         nsym = int(len(bits)/(2*nfft))
         output = np.zeros(shape=(len(bits),))
         for i in range(nsym):
-            symbol = bits[i*2*nfft:(i+1)*2*nfft]
+            symbol = bits[i*2*nfft:(i+1)*2*nfft] # a 2*nfft chunk of bits from the bitstream
             output[i*2*nfft:(i+1)*2*nfft] = symbol[Interleave-1]
             
         # repetitive encoding for the length field
-        length_encoded = ''.join([b+b+b for b in np.binary_repr(length)])
-        len_binary = np.array(list(length_encoded.zfill(2*nfft))).astype(np.int8)
+        length_encoded = ''.join([b+b+b for b in np.binary_repr(length)]) # takes bin(length) and repeats 3 times for each bit
+        len_binary = np.array(list(length_encoded.zfill(2*nfft))).astype(np.int8) # ensure encoded length is 128 bits = 1 OFDM symbol
         output = np.concatenate((len_binary, output))
     
     if level >= 2:
@@ -76,10 +77,10 @@ if __name__ == '__main__':
     if len(sys.argv)<2:
         raise Exception("Error: No message was provided")
     elif len(sys.argv)<3:
-        WifiTransmitter(sys.argv[1])
+        print(WifiTransmitter(sys.argv[1]))
     elif len(sys.argv)<4:
-        WifiTransmitter(sys.argv[1], sys.argv[2])
+        print(WifiTransmitter(sys.argv[1], sys.argv[2]))
     elif len(sys.argv)<5:
-        WifiTransmitter(sys.argv[1], sys.argv[2], sys.argv[3])
+        print(WifiTransmitter(sys.argv[1], sys.argv[2], sys.argv[3]))
     elif len(sys.argv)>=5:
         raise Exception("Error: Number of arguments exceed the maximum arguments allowed (3)")
