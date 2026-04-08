@@ -33,7 +33,7 @@ def WifiTransmitter(*args):
     Interleave = np.reshape(np.transpose(np.reshape(np.arange(1, 2*nfft+1, 1),[-1,4])),[-1,])
     length = len(message)
     preamble = np.array([1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1,1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1])
-    cc1 = check.Trellis(np.array([3]),np.array([[0o7,0o5]]))
+    cc1 = check.Trellis(np.array([3]),np.array([[0o7,0o5]])) # the encoder
     if level >= 1:
         bits = np.unpackbits(np.array([ord(c) for c in message], dtype=np.uint8))
         bits = np.pad(bits, (0, 2*nfft-len(bits)%(2*nfft)),'constant') # each OFDM symbol is 2 * nfft = 128 bits
