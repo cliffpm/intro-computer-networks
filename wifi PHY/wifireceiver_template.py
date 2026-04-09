@@ -9,28 +9,13 @@ import matplotlib.pyplot as plt
   
 
 def SoftViterbiDecoder(input_stream, cc1):
-    
 
-
-
-    # use euclidean distance (squared dist.)
-    # ideal points : 
-    # 00 : -1 - 1j
-    # 01 : -1 + 1j
-    # 11 : 1  + 1j
-    # 10 : 1 -  1j
-    #
-    #
     bits_to_ideal_complex = {0: -1-1j,
                              1: -1 +1j,
                              2: 1-1j,
-                             3: 1 + 1j}
+                             3: 1 + 1j} # (4 QAM mapping)
     
-
-
-    
-    # create a transition table 
-    # where (current_state, input_bit) -> [next_state, ideal_complex point]
+    # create a transition table:  (current_state, input_bit) -> [next_state, ideal_complex point]
     transition_table = {}
     for i in range(len(cc1.output_table)):
         for j in range(len(cc1.output_table[0])):
@@ -43,40 +28,23 @@ def SoftViterbiDecoder(input_stream, cc1):
             output = cc1.output_table[i][j] #in decimal
             transition_table[(current_state, input)] = [next_state, bits_to_ideal_complex[output]]
 
-
-    # calulcating the weights for each edge beforehand might be useful
-
-    # we can store it as the third item in the trans table values list
-    
-
- 
-    
-    
-
-    
-    # row represents time
-    # column represents the 8 states
-
     '''
     at each step every state has two incoming edges
     aka two candidates . compare total score of both paths
     and pick the path with lower score and store
     the index of the previous state in this grid
 
-    ex : best way to get to state 2 at time step 5 was coming
-    from state 4, then trellis_memory[5][2] = 4
+    score = node.val + weight
 
+    current_node.val = min(score1, score2)
     '''
     # dimension is states x num_ofdm symbols
-    trellis_memory = [[0 for _ in range(len(input_stream)+1)] for _ in range(len(cc1.number_states))] # 2d array of size num_symbols, 8
-    
-    trellis_path = np.zeros_like(trellis_memory) # use to walk backward and get
-    # the shortest path
+    #trellis_memory = is matrix graph representation. the dimensions is num_states (rows) by num_complex_numbers(columns)
+    trellis_memory = np.zeros((cc1.number_states, len(input_stream) + 1))
+    trellis_path = np.zeros_like(trellis_memory) # use to get shortest path tracing backwards
 
     trellis_input = np.zeros_like(trellis_memory)
-    # CURRENT TO DO: MAKE A TABLE current_state : [states that it couldve came from]
-    predecessor_table = {} # tells us at the current state which 2 previous state came from to get
-    # to current state
+    predecessor_table = {} 
 
     for state in range(cc1.number_states):
         for input in range(2):
@@ -86,15 +54,9 @@ def SoftViterbiDecoder(input_stream, cc1):
             else:
                 predecessor_table[next_state] = [(state, input)]
     
-
-
-
-    # it would be cleaner if we computed the distances but I guess we can do that in one go
     for i in range(1, cc1.number_states):
         trellis_memory[i][0] = float('infinity')
     
-
-
     # forward pass. we fill up the trellis_memory matrix
     for t  in range(1,len(input_stream)+1):
         actual_complex = input_stream[t-1]
@@ -112,12 +74,11 @@ def SoftViterbiDecoder(input_stream, cc1):
             euclid_dist1 = abs(ideal_complex1-actual_complex)**2
             euclid_dist2 = abs(ideal_complex2 - actual_complex)**2
 
-
             distance_1, distance_2 = trellis_memory[prev_state1][t-1], trellis_memory[prev_state2][t-1]
             distance_1 += euclid_dist1
             distance_2 += euclid_dist2
 
-            if distance_1 < distance_2: # then we USE prev state 1, so make note of that in our decision matrix
+            if distance_1 < distance_2: 
                 trellis_memory[state][t] = distance_1
                 trellis_path[state][t] = prev_state1
                 trellis_input[state][t] = input_1
@@ -126,8 +87,17 @@ def SoftViterbiDecoder(input_stream, cc1):
                 trellis_path[state][t] = prev_state2
                 trellis_input[state][t] = input_2
 
+    # backward pass, build the shortest path. Easy way is to start at end at smallest column and move to front
+    de_trellis_msg = [] # conv to int after, easier to concat
 
+    current_state = int(np.argmin(trellis_memory[:, -1]))
+    for t in range(len(trellis_memory[0])-1, 0, -1):
+        de_trellis_msg.append(trellis_input[current_state][t])
+        current_state = int(trellis_path[current_state][t])
 
+    de_trellis_msg = de_trellis_msg[::-1]
+    
+    return de_trellis_msg
 
 def WifiReceiver(input_stream, level):
 
@@ -156,16 +126,24 @@ def WifiReceiver(input_stream, level):
 
         # 4 QAM means each complex number represents 2 bits.
         # so input_stream[:len(preamble)//2] is the preamble . we should split it
-        stripped_preamble = input_stream[:len(preamble)//2]
+        stripped_preamble = input_stream[len(preamble)//2:]
         # then at this point the encoded msg. length header is the first 128 bits
         length = stripped_preamble[:nfft] # DONT FORGET THAT EACH ITEM IN STREAM IS 2 BITS
         data_block = stripped_preamble[nfft:]
         # now since I want to implement soft viterbi decoding
         # i will use the 
         #demodulated +decoded trellis stream
-        decrypt = SoftViterbiDecoder(data_block)
+        decrypt = SoftViterbiDecoder(data_block, cc1)
 
-        input_stream=input_stream
+        # note for the encoded length, currently it is in complex number
+        # we can use commpy to conv to bits but we dont need to use any viterbi decoding
+        
+        mod = comm.modulation.QAMModem(4)
+        encoded_msg_length_bits = mod.demodulate(length, demod_type = 'hard')
+
+        input_stream = np.concatenate((encoded_msg_length_bits, np.array(decrypt))) # now send to level 1
+
+        # input_stream=input_stream
        
     if level >= 1: # input is bitstream 1D array of floats
     
@@ -193,7 +171,7 @@ def WifiReceiver(input_stream, level):
 
         for i in range(nsym):
             symbol = data_stream[i*2*nfft:(i+1)*2*nfft]
-            print(f"symbol : {symbol}")
+            # print(f"symbol : {symbol}")
             deinterleaved[i*2*nfft:(i+1)*2*nfft] = symbol[Interleave_tr-1]
         
         for i in range(length):
@@ -202,7 +180,7 @@ def WifiReceiver(input_stream, level):
             current_char = "".join(current_char.astype(int).astype(str))
             message += chr(int(current_char,2))
 
-        length = bin(length)[2:] # since in handout the output wants the length in binary representation
+        #length = bin(length)[2:] # since in handout the output wants the length in binary representation
         return begin_zero_padding, message, length
 
     raise Exception("Error: Unsupported level")
@@ -228,5 +206,7 @@ if __name__ == "__main__":
     # print(f"message : {message}")
     # print(f"length : {length}")
 
-    test_2 = WifiTransmitter('101', 2)
-    print(test_2)
+    txsignal = WifiTransmitter('hello world', 2)
+    begin_zero_padding, message, length = WifiReceiver(txsignal, 2)
+    
+    print(begin_zero_padding, message, length)
