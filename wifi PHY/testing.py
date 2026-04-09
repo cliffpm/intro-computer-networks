@@ -3,6 +3,7 @@ import commpy as comm
 import commpy.modulation as modul
 import commpy.channelcoding.convcode as check
 
+
 msg = np.array([0,0,0, 1,1,1,1,0])
 
 mod = modul.QAMModem(4)
@@ -30,12 +31,37 @@ for i in range(len(cc1.output_table)):
         input = j
         next_state = cc1.next_state_table[i][j]
         output = cc1.output_table[i][j] #in decimal
-        transition_table[(current_state, input)] = [next_state, bits_to_ideal_complex[output]]
 
-        cc1.num
+        ideal_complex = bits_to_ideal_complex[output]
+        actual_complex = input_stream[i] # the current Z_i actual complex value
 
-print(transition_table
-)
+        distance = abs(ideal_complex - actual_complex)**2
+
+
+        transition_table[(current_state, input)] = [next_state, distance]
+
+
+
+predecessor_table = {}
+
+for state in range(cc1.number_states):
+    for input in range(2):
+        next_state, ideal_complex_pt = transition_table[(state, input)]
+        if next_state in predecessor_table:
+            predecessor_table[int(next_state)].append(state)
+        else:
+            predecessor_table[int(next_state)] = [state]
+
+
+# print(transition_table)
+
+# print(predecessor_table)
+
+x = -1-1j
+y = .8 +.4j
+
+print(abs(y-x)**2)
+
 
 # msg = "hello"
 

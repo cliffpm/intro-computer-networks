@@ -43,15 +43,13 @@ def SoftViterbiDecoder(input_stream, cc1):
             output = cc1.output_table[i][j] #in decimal
             transition_table[(current_state, input)] = [next_state, bits_to_ideal_complex[output]]
 
-    # start in state 0 ??
-    path_metric = [0]*cc1.number_states # keep track of total accumalted distance
-    
-    # each val in path_metric represents the 
-    # sum of all euclidean distances of best possible path
-    # from start of message to specific state i
-    for i in range(1, cc1.number_states):
-        path_metric[i] = float('inf')
 
+    # calulcating the weights for each edge beforehand might be useful
+
+    # we can store it as the third item in the trans table values list
+    
+
+ 
     
     
 
@@ -69,12 +67,65 @@ def SoftViterbiDecoder(input_stream, cc1):
     from state 4, then trellis_memory[5][2] = 4
 
     '''
-    # dimension is len(num complex symbols) by num_states (8)
-    trellis_memory = [[0 for _ in range(cc1.number_states)] for _ in range(len(input_stream))] # 2d array of size num_symbols, 8
+    # dimension is states x num_ofdm symbols
+    trellis_memory = [[0 for _ in range(len(input_stream)+1)] for _ in range(len(cc1.number_states))] # 2d array of size num_symbols, 8
     
-    # forward pass
-    for complex_symbol in input_stream:
-        
+    trellis_path = np.zeros_like(trellis_memory) # use to walk backward and get
+    # the shortest path
+
+    trellis_input = np.zeros_like(trellis_memory)
+    # CURRENT TO DO: MAKE A TABLE current_state : [states that it couldve came from]
+    predecessor_table = {} # tells us at the current state which 2 previous state came from to get
+    # to current state
+
+    for state in range(cc1.number_states):
+        for input in range(2):
+            next_state, ideal_complex_pt = transition_table[(state, input)]
+            if next_state in predecessor_table:
+                predecessor_table[next_state].append((state, input))
+            else:
+                predecessor_table[next_state] = [(state, input)]
+    
+
+
+
+    # it would be cleaner if we computed the distances but I guess we can do that in one go
+    for i in range(1, cc1.number_states):
+        trellis_memory[i][0] = float('infinity')
+    
+
+
+    # forward pass. we fill up the trellis_memory matrix
+    for t  in range(1,len(input_stream)+1):
+        actual_complex = input_stream[t-1]
+
+        for state in range(cc1.number_states):
+            prev1_pack = predecessor_table[state][0]
+            prev2_pack = predecessor_table[state][1]
+
+            prev_state1, input_1 = prev1_pack[0], prev1_pack[1]
+            prev_state2, input_2 = prev2_pack[0], prev2_pack[1]
+
+            _, ideal_complex1 = transition_table[(prev_state1), input_1]
+            _, ideal_complex2 = transition_table[(prev_state2), input_2]
+
+            euclid_dist1 = abs(ideal_complex1-actual_complex)**2
+            euclid_dist2 = abs(ideal_complex2 - actual_complex)**2
+
+
+            distance_1, distance_2 = trellis_memory[prev_state1][t-1], trellis_memory[prev_state2][t-1]
+            distance_1 += euclid_dist1
+            distance_2 += euclid_dist2
+
+            if distance_1 < distance_2: # then we USE prev state 1, so make note of that in our decision matrix
+                trellis_memory[state][t] = distance_1
+                trellis_path[state][t] = prev_state1
+                trellis_input[state][t] = input_1
+            else :
+                trellis_memory[state][t] = distance_2
+                trellis_path[state][t] = prev_state2
+                trellis_input[state][t] = input_2
+
 
 
 
