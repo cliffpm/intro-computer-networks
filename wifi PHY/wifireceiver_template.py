@@ -4,6 +4,7 @@ import numpy as np
 import sys
 import commpy as comm
 import commpy.channelcoding.convcode as check
+import commpy.modulation as modulation
 from pip import main
 import matplotlib.pyplot as plt
   
@@ -113,12 +114,50 @@ def WifiReceiver(input_stream, level):
     if level >= 4:
         #Input QAM modulated + Encoded Bits + OFDM Symbols in a long stream
         #Output Detected Packet set of symbols
+        mod = comm.modulation.QAMModem(4)
+        complex_preamble = mod.modulate(preamble.astype(bool))
+
+
+        # WRONG, since data is now noisy
+        # have to pick the closest SPIKE so calculate power probably
+        # keep an array of len(input_stream)-len(preamble) + 1
+        # where index represent the first index of where we line up the 
+        # preamble and the value inside is the power or score. 
+        # we then after filling this table pick highest score
+
+        # starting_block = 0 # index at where the entire input_stream[[preamble], [repeated 3 msg len], [data chunks], [noise at the end]]
+        # # find when preamble matches
+        # for i in range(len(input_stream)-len(preamble)+1): 
+        #     if complex_preamble == input_stream[i:nfft]: # match
+        #         begin_zero_padding = i
+        #         starting_block = i
+        
+        
+
+        # make sure to set begin_zero_padding to return it
+        # at the end. This value is the number of zeros
+        # appended at the beginning of the message.
+        
+
+
         input_stream=input_stream
 
     if level >= 3:
         #Input QAM modulated + Encoded Bits + OFDM Symbols
         #Output QAM modulated + Encoded Bits
-        input_stream=input_stream
+        data_chunk = input_stream[2*nfft:] # because input is [[preamble], [encoded length], [data chunk]] & preamble and 
+        # encoded length and all data blocks are 64 length each because we haven't undone the QAM mapping yet
+        nsym = int(len(data_chunk)/nfft) # how many 64 wide data blocks we have that we need to FFT on
+
+        for i in range(nsym):
+            symbol = data_chunk[i*nfft:(i+1)*nfft]
+            data_chunk[i*nfft:(i+1)*nfft] = np.fft.fft(symbol)
+        
+        preamble_fft = np.fft.fft(input_stream[:nfft])
+        encoded_msg_length_fft = np.fft.fft(input_stream[nfft:2*nfft])
+
+        input_stream = np.concatenate((preamble_fft, encoded_msg_length_fft, data_chunk))
+
     
     if level >= 2:
         #Input QAM modulated + Encoded Bits (ECC)
@@ -206,7 +245,7 @@ if __name__ == "__main__":
     # print(f"message : {message}")
     # print(f"length : {length}")
 
-    txsignal = WifiTransmitter('hello world', 2)
-    begin_zero_padding, message, length = WifiReceiver(txsignal, 2)
+    txsignal = WifiTransmitter('hello world', 3)
+    begin_zero_padding, message, length = WifiReceiver(txsignal, 3)
     
     print(begin_zero_padding, message, length)
