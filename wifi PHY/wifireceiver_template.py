@@ -142,63 +142,16 @@ def WifiReceiver(input_stream, level):
             length_bits_decoded.append(str(np.bincount(length_bits[i:i+3].astype(int)).argmax()))
         length_lv4 = int(''.join(length_bits_decoded), 2)
 
-      
         data_bits = length_lv4 * 8
-
-        # data_bits *= 2 # to account for the 2x bit increase from 1/2 rate conv. encoding
         
-        # data_complex_num = np.ceil(data_bits)/(2*nfft) # one OFDM block has nfft complex numbers. 
-
-
-        # number_chunks = int(data_complex_num * nfft) # multiply by nfft bc each chunk is 1 nfft in time
-        
-        
-        number_chunks = int(np.ceil((data_bits*2)/(2*nfft)) * nfft)*2 # ahve to multiply data bits by 2 bc this is still
+        number_chunks = int(np.ceil((data_bits*2)/(2*nfft)) * nfft) # ahve to multiply data bits by 2 bc this is still
         # conv encoded, with 1/2 rate so each state spits out 2 bits. that means the
         # ENCODING is actually 2x the number of bits we expect to have for our message.
-        print(f"number_chunks : {number_chunks}")
         data_start_idx = peak_location + preamble_len + message_header_len
 
         datablock = input_stream[data_start_idx: data_start_idx + number_chunks]
-        print(datablock)
         input_stream = np.concatenate((preamble_cut, length_header, datablock))
 
-
-
-
-        # preamble_cut = input_stream[peak_location:peak_location + len(complex_preamble)]
-        # length_header = input_stream[peak_location + len(complex_preamble): peak_location + len(complex_preamble)+ nfft]
-
-        # #start_data_block = peak_location + len(complex_preamble)+1 + nfft + 1 # index of start of data block
-
-
-        # # need to decode length header to get the length to make sure we do not process the noise at the end ...
-
-        # length_header_fft = np.fft.fft(length_header)
-        
-        # encoded_msg_length_bits = mod.demodulate(length_header_fft, demod_type = 'hard')
-
-        
-        # print(f"encoded_msg_length_bits : {encoded_msg_length_bits}")
-
-        # decoded_length = []
-        # for i in range(0,len(encoded_msg_length_bits),3):
-        #     decoded_length.append(str(np.bincount(encoded_msg_length_bits[i:i+3].astype(int)).argmax()))
-
-        # length_temp = int(''.join(decoded_length), 2)
-
-        # total_bits = length_temp * 8 # because we use uint8
-        # num_blocks = int(np.ceil(total_bits/(2*nfft)))
-
-
-        # datablock = input_stream[peak_location+len(complex_preamble)+nfft: peak_location+len(complex_preamble)+nfft + (nfft*num_blocks)]
-        
- 
-        # input_stream =np.concatenate((preamble_cut,length_header, datablock))
-
-
-
-        
 
     if level >= 3: # fast fourier transform. Conv time sig to frequency signal
         #Input QAM modulated + Encoded Bits + OFDM Symbols
@@ -213,7 +166,6 @@ def WifiReceiver(input_stream, level):
         
         preamble_fft = np.fft.fft(input_stream[:nfft])
         encoded_msg_length_fft = np.fft.fft(input_stream[nfft:2*nfft])
-        print(data_chunk)
         input_stream = np.concatenate((preamble_fft, encoded_msg_length_fft, data_chunk))
 
     
@@ -236,8 +188,7 @@ def WifiReceiver(input_stream, level):
         # we can use commpy to conv to bits but we dont need to use any viterbi decoding
         
         mod = comm.modulation.QAMModem(4)
-        encoded_msg_length_bits = mod.demodulate(length, demod_type = 'hard')
-        print(decrypt)
+        encoded_msg_length_bits = mod.demodulate(length, demod_type = 'hard') # -> 1 ofdm is 64 complex numbers. 4 qam is 2 bits per comp. number. 64 * 2 = 128 bit per ofdm block
         input_stream = np.concatenate((encoded_msg_length_bits, np.array(decrypt))) # now send to level 1
 
         # input_stream=input_stream
@@ -263,7 +214,6 @@ def WifiReceiver(input_stream, level):
         # next step is to deinterleave the bits
         deinterleaved = np.zeros(len(input_stream[2*nfft:]),)
         data_stream = input_stream[2*nfft:]
-        print(data_stream)
         nsym = int(len(data_stream) / (2*nfft)) # num of chunks
 
         for i in range(nsym):
@@ -271,7 +221,6 @@ def WifiReceiver(input_stream, level):
             # print(f"symbol : {symbol}")
             deinterleaved[i*2*nfft:(i+1)*2*nfft] = symbol[Interleave_tr-1]
         
-        print(f"deinterleaved : {deinterleaved}")
         for i in range(length):
             # current_char = message_string[i*8:(i+1)*8]
             current_char = deinterleaved[i*8:(i+1)*8]
@@ -287,27 +236,43 @@ def WifiReceiver(input_stream, level):
 # for testing purpose
 from wifitransmitter import WifiTransmitter
 if __name__ == "__main__":
-    # test_case = 'The Internet has transformed our everyday lives, bringing people closer together and powering multi-billion dollar industries. The mobile revolution has brought Internet connectivity to the last-mile, connecting billions of users worldwide. But how does the Internet work? What do oft repeated acronyms like "LTE", "TCP", "WWW" or a "HTTP" actually mean and how do they work? This course introduces fundamental concepts of computer networks that form the building blocks of the Internet. We trace the journey of messages sent over the Internet from bits in a computer or phone to packets and eventually signals over the air or wires. We describe commonalities and differences between traditional wired computer networks from wireless and mobile networks. Finally, we build up to exciting new trends in computer networks such as the Internet of Things, 5-G and software defined networking. Topics include: physical layer and coding (CDMA, OFDM, etc.); data link protocol; flow control, congestion control, routing; local area networks (Ethernet, Wi-Fi, etc.); transport layer; and introduction to cellular (LTE) and 5-G networks. The course will be graded based on quizzes (on canvas), a midterm and final exam and four projects (all individual). '
-    # symbols = [randint(0, 1) for i in range(32*8)]
-    # print(test_case)
-    # output = WifiTransmitter(test_case, 2)
-    # begin_zero_padding, message, length_y = WifiReceiver(output, 2)
-    # print(begin_zero_padding, message, length_y)
-    # print(test_case == message)
-
-
-    # test 1 : works
-    # txtsignal = WifiTransmitter('hello world', 1)
-    # begin_zero_padding, message, length = WifiReceiver(txtsignal, 1)
-
-    # print(f"begin_zero_padding : {begin_zero_padding}")
-    # print(f"message : {message}")
-    # print(f"length : {length}")
+    test_case = 'The Internet has transformed our everyday lives, bringing people closer together and powering multi-billion dollar industries. The mobile revolution has brought Internet connectivity to the last-mile, connecting billions of users worldwide. But how does the Internet work? What do oft repeated acronyms like "LTE", "TCP", "WWW" or a "HTTP" actually mean and how do they work? This course introduces fundamental concepts of computer networks that form the building blocks of the Internet. We trace the journey of messages sent over the Internet from bits in a computer or phone to packets and eventually signals over the air or wires. We describe commonalities and differences between traditional wired computer networks from wireless and mobile networks. Finally, we build up to exciting new trends in computer networks such as the Internet of Things, 5-G and software defined networking. Topics include: physical layer and coding (CDMA, OFDM, etc.); data link protocol; flow control, congestion control, routing; local area networks (Ethernet, Wi-Fi, etc.); transport layer; and introduction to cellular (LTE) and 5-G networks. The course will be graded based on quizzes (on canvas), a midterm and final exam and four projects (all individual). '
 
     noise_length, txsignal, length = WifiTransmitter('hello world', 4)
     begin_zero_padding, message, length = WifiReceiver(txsignal, 4)
-    # txsignal = WifiTransmitter('hello world', 3)
-    # begin_zero_padding, message, length = WifiReceiver(txsignal, 3)
+    print("TESTING LEVEL 4: ")
 
-    # print(noise_length, length)
     print(begin_zero_padding, message, length)
+
+    print()
+
+    txsignal = WifiTransmitter('hello world', 3)
+    begin_zero_padding, message, length = WifiReceiver(txsignal, 3)
+
+    print("TESTING LEVEL 3: ")
+
+    print(begin_zero_padding, message, length)
+
+    print()
+
+    txsignal = WifiTransmitter('hello world', 2)
+    begin_zero_padding, message, length = WifiReceiver(txsignal, 2)
+    print("TESTING LEVEL 2: ")
+
+    print(begin_zero_padding, message, length)
+
+    print()
+    txsignal = WifiTransmitter('hello world', 1)
+    begin_zero_padding, message, length = WifiReceiver(txsignal, 1)
+    print("TESTING LEVEL 1: ")
+
+    print(begin_zero_padding, message, length)
+
+    print()
+
+    print("LONG MESSAGE TEST CASE WITH NOISE (Level 4)")
+    noise_length, txsignal, length = WifiTransmitter(test_case, 4)
+    begin_zero_padding, message, length = WifiReceiver(txsignal, 4)
+    print(begin_zero_padding, message, length)
+    # # print(noise_length, length)
+    # print(begin_zero_padding, message, length)
