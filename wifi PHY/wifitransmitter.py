@@ -27,7 +27,8 @@ def WifiTransmitter(*args):
     if len(message) > 10000:
         raise Exception("Error: Message is too long")
     if level>4 or level<1:
-        raise Exception("Error:Invalid Level, must be 1-4")
+        raise Exception("Error:Invalid Level, must be 1-4"
+                        )
 
     
     nfft = 64

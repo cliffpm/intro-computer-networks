@@ -111,38 +111,96 @@ def WifiReceiver(input_stream, level):
     begin_zero_padding = 0
     message=""
     length=0
-    if level >= 4:
+    if level >= 4: # currently in time domain
         #Input QAM modulated + Encoded Bits + OFDM Symbols in a long stream
         #Output Detected Packet set of symbols
+
         mod = comm.modulation.QAMModem(4)
         complex_preamble = mod.modulate(preamble.astype(bool))
 
+        complex_preamble = np.fft.ifft(complex_preamble)
+    
 
-        # WRONG, since data is now noisy
-        # have to pick the closest SPIKE so calculate power probably
-        # keep an array of len(input_stream)-len(preamble) + 1
-        # where index represent the first index of where we line up the 
-        # preamble and the value inside is the power or score. 
-        # we then after filling this table pick highest score
+        correlation = np.abs(np.correlate(input_stream, complex_preamble, mode = 'valid'))
+        peak_location = np.argmax(np.abs(correlation))
+        begin_zero_padding = peak_location
 
-        # starting_block = 0 # index at where the entire input_stream[[preamble], [repeated 3 msg len], [data chunks], [noise at the end]]
-        # # find when preamble matches
-        # for i in range(len(input_stream)-len(preamble)+1): 
-        #     if complex_preamble == input_stream[i:nfft]: # match
-        #         begin_zero_padding = i
-        #         starting_block = i
+        preamble_len = len(complex_preamble)
+
+        message_header_len = nfft
+
+        preamble_cut = input_stream[peak_location:peak_location + preamble_len]
+        length_header = input_stream[peak_location + preamble_len : peak_location + preamble_len + message_header_len]
+
+        length_header_fft = np.fft.fft(length_header)
+
+        length_bits = mod.demodulate(length_header_fft, demod_type = 'hard')
+        length_bits = np.trim_zeros(length_bits, 'f')
+        length_bits_decoded = []
+
+        for i in range(0, len(length_bits), 3):
+            length_bits_decoded.append(str(np.bincount(length_bits[i:i+3].astype(int)).argmax()))
+        length_lv4 = int(''.join(length_bits_decoded), 2)
+
+      
+        data_bits = length_lv4 * 8
+
+        # data_bits *= 2 # to account for the 2x bit increase from 1/2 rate conv. encoding
+        
+        # data_complex_num = np.ceil(data_bits)/(2*nfft) # one OFDM block has nfft complex numbers. 
+
+
+        # number_chunks = int(data_complex_num * nfft) # multiply by nfft bc each chunk is 1 nfft in time
         
         
+        number_chunks = int(np.ceil((data_bits*2)/(2*nfft)) * nfft)*2 # ahve to multiply data bits by 2 bc this is still
+        # conv encoded, with 1/2 rate so each state spits out 2 bits. that means the
+        # ENCODING is actually 2x the number of bits we expect to have for our message.
+        print(f"number_chunks : {number_chunks}")
+        data_start_idx = peak_location + preamble_len + message_header_len
 
-        # make sure to set begin_zero_padding to return it
-        # at the end. This value is the number of zeros
-        # appended at the beginning of the message.
+        datablock = input_stream[data_start_idx: data_start_idx + number_chunks]
+        print(datablock)
+        input_stream = np.concatenate((preamble_cut, length_header, datablock))
+
+
+
+
+        # preamble_cut = input_stream[peak_location:peak_location + len(complex_preamble)]
+        # length_header = input_stream[peak_location + len(complex_preamble): peak_location + len(complex_preamble)+ nfft]
+
+        # #start_data_block = peak_location + len(complex_preamble)+1 + nfft + 1 # index of start of data block
+
+
+        # # need to decode length header to get the length to make sure we do not process the noise at the end ...
+
+        # length_header_fft = np.fft.fft(length_header)
+        
+        # encoded_msg_length_bits = mod.demodulate(length_header_fft, demod_type = 'hard')
+
+        
+        # print(f"encoded_msg_length_bits : {encoded_msg_length_bits}")
+
+        # decoded_length = []
+        # for i in range(0,len(encoded_msg_length_bits),3):
+        #     decoded_length.append(str(np.bincount(encoded_msg_length_bits[i:i+3].astype(int)).argmax()))
+
+        # length_temp = int(''.join(decoded_length), 2)
+
+        # total_bits = length_temp * 8 # because we use uint8
+        # num_blocks = int(np.ceil(total_bits/(2*nfft)))
+
+
+        # datablock = input_stream[peak_location+len(complex_preamble)+nfft: peak_location+len(complex_preamble)+nfft + (nfft*num_blocks)]
+        
+ 
+        # input_stream =np.concatenate((preamble_cut,length_header, datablock))
+
+
+
         
 
-
-        input_stream=input_stream
-
-    if level >= 3:
+    if level >= 3: # fast fourier transform. Conv time sig to frequency signal
         #Input QAM modulated + Encoded Bits + OFDM Symbols
         #Output QAM modulated + Encoded Bits
         data_chunk = input_stream[2*nfft:] # because input is [[preamble], [encoded length], [data chunk]] & preamble and 
@@ -155,7 +213,7 @@ def WifiReceiver(input_stream, level):
         
         preamble_fft = np.fft.fft(input_stream[:nfft])
         encoded_msg_length_fft = np.fft.fft(input_stream[nfft:2*nfft])
-
+        print(data_chunk)
         input_stream = np.concatenate((preamble_fft, encoded_msg_length_fft, data_chunk))
 
     
@@ -179,7 +237,7 @@ def WifiReceiver(input_stream, level):
         
         mod = comm.modulation.QAMModem(4)
         encoded_msg_length_bits = mod.demodulate(length, demod_type = 'hard')
-
+        print(decrypt)
         input_stream = np.concatenate((encoded_msg_length_bits, np.array(decrypt))) # now send to level 1
 
         # input_stream=input_stream
@@ -205,7 +263,7 @@ def WifiReceiver(input_stream, level):
         # next step is to deinterleave the bits
         deinterleaved = np.zeros(len(input_stream[2*nfft:]),)
         data_stream = input_stream[2*nfft:]
-        
+        print(data_stream)
         nsym = int(len(data_stream) / (2*nfft)) # num of chunks
 
         for i in range(nsym):
@@ -213,6 +271,7 @@ def WifiReceiver(input_stream, level):
             # print(f"symbol : {symbol}")
             deinterleaved[i*2*nfft:(i+1)*2*nfft] = symbol[Interleave_tr-1]
         
+        print(f"deinterleaved : {deinterleaved}")
         for i in range(length):
             # current_char = message_string[i*8:(i+1)*8]
             current_char = deinterleaved[i*8:(i+1)*8]
@@ -245,7 +304,10 @@ if __name__ == "__main__":
     # print(f"message : {message}")
     # print(f"length : {length}")
 
-    txsignal = WifiTransmitter('hello world', 3)
-    begin_zero_padding, message, length = WifiReceiver(txsignal, 3)
-    
+    noise_length, txsignal, length = WifiTransmitter('hello world', 4)
+    begin_zero_padding, message, length = WifiReceiver(txsignal, 4)
+    # txsignal = WifiTransmitter('hello world', 3)
+    # begin_zero_padding, message, length = WifiReceiver(txsignal, 3)
+
+    # print(noise_length, length)
     print(begin_zero_padding, message, length)
