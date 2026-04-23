@@ -12,55 +12,56 @@ output = mod.modulate(msg.astype(bool))
 
 cc1 = check.Trellis(np.array([3]),np.array([[0o7,0o5]])) # the encoder
 
+print(cc1.number_states)
 # print(cc1.next_state_table)
 
 # print()
 # print(cc1.output_table)
-bits_to_ideal_complex = {0: -1-1j,
-                            1: -1 +1j,
-                            2: 1-1j,
-                            3: 1 + 1j}
+# bits_to_ideal_complex = {0: -1-1j,
+#                             1: -1 +1j,
+#                             2: 1-1j,
+#                             3: 1 + 1j}
 
-transition_table = {}
-for i in range(len(cc1.output_table)):
-    for j in range(len(cc1.output_table[0])):
-        # i represents the current state
-        # j represents the input
-        # arr[i][j] represents the next state
-        current_state = i
-        input = j
-        next_state = cc1.next_state_table[i][j]
-        output = cc1.output_table[i][j] #in decimal
+# transition_table = {}
+# for i in range(len(cc1.output_table)):
+#     for j in range(len(cc1.output_table[0])):
+#         # i represents the current state
+#         # j represents the input
+#         # arr[i][j] represents the next state
+#         current_state = i
+#         input = j
+#         next_state = cc1.next_state_table[i][j]
+#         output = cc1.output_table[i][j] #in decimal
 
-        ideal_complex = bits_to_ideal_complex[output]
-        actual_complex = input_stream[i] # the current Z_i actual complex value
+#         ideal_complex = bits_to_ideal_complex[output]
+#         actual_complex = input_stream[i] # the current Z_i actual complex value
 
-        distance = abs(ideal_complex - actual_complex)**2
-
-
-        transition_table[(current_state, input)] = [next_state, distance]
+#         distance = abs(ideal_complex - actual_complex)**2
 
 
-
-predecessor_table = {}
-
-for state in range(cc1.number_states):
-    for input in range(2):
-        next_state, ideal_complex_pt = transition_table[(state, input)]
-        if next_state in predecessor_table:
-            predecessor_table[int(next_state)].append(state)
-        else:
-            predecessor_table[int(next_state)] = [state]
+#         transition_table[(current_state, input)] = [next_state, distance]
 
 
-# print(transition_table)
 
-# print(predecessor_table)
+# predecessor_table = {}
 
-x = -1-1j
-y = .8 +.4j
+# for state in range(cc1.number_states):
+#     for input in range(2):
+#         next_state, ideal_complex_pt = transition_table[(state, input)]
+#         if next_state in predecessor_table:
+#             predecessor_table[int(next_state)].append(state)
+#         else:
+#             predecessor_table[int(next_state)] = [state]
 
-print(abs(y-x)**2)
+
+# # print(transition_table)
+
+# # print(predecessor_table)
+
+# x = -1-1j
+# y = .8 +.4j
+
+# print(abs(y-x)**2)
 
 
 # msg = "hello"
