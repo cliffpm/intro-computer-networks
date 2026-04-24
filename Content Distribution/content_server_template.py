@@ -34,8 +34,23 @@ class Content_server():
 
         # Create all the data structures to store various variables
         self.peers = [] # current neighbor of this node
-        self.active_peers = {} #   {neighbor name :{uuid: , host: , backend_port: , metric: , last_seen :  (this is the timestamp of last keepalive message that is seen)}}                  will store the active nodes neighbors later
-        self.map = {} #node name : {neighbor name : distance}
+       
+
+       #   {neighbor name :{uuid: _ , host: _ , backend_port: _ , metric: _}}  
+        self.active_peers = {} 
+
+
+
+        #node name : {neighbor name : distance}
+        self.map = {} 
+        
+        # the last time that node with uuid had sent a keep alive message
+        self.uuid_to_last_alive = {} 
+        # self.uuid_to_last_alive will keep track of last time that node w
+        # uuid had sent a keep alive message, meaning its also our neighbor
+
+
+        self.uuid_to_name = {} # will be helpful since right now haven't implemented LSA . uuid -> node name (from LSA)
 
         with open(conf_file_addr, "r") as f:
             for line in f:
@@ -57,16 +72,20 @@ class Content_server():
                 elif key.startswith("peer_"):
                     vals = [val.strip() for val in value.split(',')]
                     uuid_t = vals[0]
-                    name_t = vals[1]
+                    host_name_t = vals[1]
                     backend_port_t = int(vals[2])
                     distance_t = int(vals[3])
                     self.peers.append({
                         "uuid": uuid_t,
-                        "host":name_t,
+                        "host":host_name_t,
                         "backend_port": backend_port_t,
                         "metric": distance_t
                     })
 
+
+        # maybe handle case if uuid is not found ?
+        # because prof. said that in lecture
+        # but in spec. it says uuid guranteed in config. file
 
 
 
@@ -92,21 +111,21 @@ class Content_server():
 
 
         # Initialize link state advertisement that repeats using a neighbor variable
+        # self.link_state_adv() # probably not right here . deadlock since thread flag not on
         
-         # self.link_state_adv() - i dont think adding this here is right
-        
-         # since we haven't init. self.remain_threads = True yet
-
         print("Initial setting complete")
 
         self.remain_threads = True
         self.alive() # parallel code
         return
-    
+
+
     def addneighbor(self, host, backend_port, metric):
         # Add neighbor code goes here
         return
     
+
+    # this is sending updates every 30 seconds or so, so the graph is most updated
     def link_state_adv(self):
         while self.remain_threads:
             # Perform Link State Advertisement to all your neighbors periodically 
@@ -118,6 +137,9 @@ class Content_server():
         # If new information then send to all your neighbors, if old information then drop.
         return
     
+
+
+    # use the template dl socket code to send information to all alive neighbors
     def dead_adv(self, peer):
         # Advertise death before kill
         return
@@ -126,8 +148,25 @@ class Content_server():
         # Forward the death message information to other peers
         return
 
+
+
+
     def keep_alive(self):
         # Tell that you are alive to all your neighbors, periodically.
+        while self.remain_threads:
+
+            for neighbor in self.peers: # each neighbor is a dict of uuid, hostname, backendport, distance
+                ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # dont make it a self. variable to avoid race condition
+                try:
+                    ul_socket.connect(('127.0.0.1', neighbor["backend_port"]))
+                    packet_sending = {"uuid" : self.uuid, "message" : "Alive message"}
+                    ul_socket.send((str(packet_sending)).encode()) # should send it along with our
+                    # current node UUID, so that way in timeout_old, we can distingush
+                    # which node sent the keep alive so we can update status dead or alive
+                    ul_socket.close()
+                except socket.error:
+                    pass
+            time.sleep(ALIVE_SGN_INTERVAL)
         return
     
    
@@ -138,19 +177,48 @@ class Content_server():
             try:
                 connection_socket, client_address = self.dl_socket.accept()
                 msg_string = connection_socket.recv(BUFSIZE).decode()
+                msg_string = ast.literal_eval(msg_string)
+                if isinstance(msg_string, dict):
+                    message = msg_string["message"]
+                    sender_uuid = msg_string["uuid"]
                 # print("received", connection_socket, client_address, msg_string)
             except socket.timeout:
                 msg_string = ""
                 pass
 
-            if msg_string == "":    # empty message
-                pass
-            elif msg_string == "Alive message": # Update the timeout time if known node, otherwise add new neighbor
-                pass
-            elif msg_string == "Link State Packet":     # Update the map based on new information, drop if old information
+            if message == "":    # empty message
+                pass # do nothing since socket probably failed
+
+
+
+
+            ## might be a bit scuffed because at the time I wrote this block, LSA wasn't written yet
+            elif message == "Alive message": # Update the timeout time if known node, otherwise add new neighbor
+                # known_sender = None
+
+                # for neighbor_dict in self.peers:
+                #     neighbor_uuid = neighbor_dict["uuid"]
+                #     if neighbor_uuid == sender_uuid:
+                #         known_sender = neighbor_dict
+                #         break
+                        
+                # if known_sender: # this means that the node that sent keep alive is one of our neighbors
+                #     name = self.uuid_to_name[sender_uuid]
+                #     self.active_peers[name][""]
+                current_time = time.time()
+                self.uuid_to_last_alive[sender_uuid] = current_time
+  
+                
+
+
+
+
+
+
+            elif message == "Link State Packet":     # Update the map based on new information, drop if old information
                 #If new information, also flood to other neighbors
                 pass
-            elif msg_string == "Death message": # Delete the node if it sends the message before executing kill.
+            elif message == "Death message": # Delete the node if it sends the message before executing kill.
                 pass
             # otherwise the msg is dropped
 
@@ -183,7 +251,8 @@ class Content_server():
                 # Kill all threads
             elif command == "uuid":
                 # Print UUID
-            elif command == "neighbors":
+                print(str({"uuid": self.uuid}))
+            elif command == "neighbors": # complete this after completed link_state_adv()
                 # Print Neighbor information
             elif command == "addneighbor":
                 # Update Neighbor List with new neighbor
