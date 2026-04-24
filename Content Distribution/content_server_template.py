@@ -27,26 +27,80 @@ UPSTREAM_PORT_NUMBER = 1111 # socket number for UL transmission
 class Content_server():
     def __init__(self, conf_file_addr):
         # load and read configuration file
-        
-        # create the receive socket
-        self.dl_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.dl_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.dl_socket.bind(("", BACKEND PORT)) #YOU NEED TO READ THIS FROM CONFIGURATION FILE
-        self.dl_socket.listen(100)
+        self.uuid = None
+        self.name = None # name for curr node
+        self.backend_port = None
+        self.peer_count = None
 
         # Create all the data structures to store various variables
-        
-        # Extract neighbor information and populate the initial variables
-        
-        # Update the map 
-        
-        # Initialize link state advertisement that repeats using a neighbor variable
-        self.link_state_adv()
+        self.peers = [] # current neighbor of this node
+        self.active_peers = {} #   {neighbor name :{uuid: , host: , backend_port: , metric: , last_seen :  (this is the timestamp of last keepalive message that is seen)}}                  will store the active nodes neighbors later
+        self.map = {} #node name : {neighbor name : distance}
 
-        # print("Initial setting complete")
+        with open(conf_file_addr, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line :
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip()
+
+                if key == "uuid":
+                    self.uuid = value
+                elif key == "name":
+                    self.name = value
+                elif key == "backend_port":
+                    self.backend_port = int(value)
+                elif key == "peer_count":
+                    self.peer_count = value
+                elif key.startswith("peer_"):
+                    vals = [val.strip() for val in value.split(',')]
+                    uuid_t = vals[0]
+                    name_t = vals[1]
+                    backend_port_t = int(vals[2])
+                    distance_t = int(vals[3])
+                    self.peers.append({
+                        "uuid": uuid_t,
+                        "host":name_t,
+                        "backend_port": backend_port_t,
+                        "metric": distance_t
+                    })
+
+
+
+
+
+
+        # create the receive socket . This socket is for recieving from the server to client
+        self.dl_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.dl_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.dl_socket.bind(('127.0.0.1', self.backend_port)) #YOU NEED TO READ THIS FROM CONFIGURATION FILE
+        self.dl_socket.listen(100)
+
+     
+
+
+        # Extract neighbor information and populate the initial variables - believe I did this above
+
+
+
+        # Update the map - I can only update it once I do link-state-advertisement
+        # so I think we build the map in the link_state_adv() function
+
+
+
+
+        # Initialize link state advertisement that repeats using a neighbor variable
+        
+         # self.link_state_adv() - i dont think adding this here is right
+        
+         # since we haven't init. self.remain_threads = True yet
+
+        print("Initial setting complete")
 
         self.remain_threads = True
-        self.alive()
+        self.alive() # parallel code
         return
     
     def addneighbor(self, host, backend_port, metric):
