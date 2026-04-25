@@ -31,6 +31,9 @@ class Content_server():
         self.name = None # name for curr node
         self.backend_port = None
         self.peer_count = None
+        self.seq = 0 # use this for LSA to determine 'recent'ness
+
+
 
         # Create all the data structures to store various variables
         self.peers = [] # current neighbor of this node
@@ -48,6 +51,12 @@ class Content_server():
         self.uuid_to_last_alive = {} 
         # self.uuid_to_last_alive will keep track of last time that node w
         # uuid had sent a keep alive message, meaning its also our neighbor
+
+
+
+        # i believe we can fill this in the flooding stage
+        # state_adv function is only used to send the packet to each neighbors only 
+        # from the current node
 
 
         self.uuid_to_name = {} # will be helpful since right now haven't implemented LSA . uuid -> node name (from LSA)
@@ -120,8 +129,31 @@ class Content_server():
         return
 
 
-    def addneighbor(self, host, backend_port, metric):
+    # note code came originally without uuid as a parameter,
+    # but it should be included to follow expected neighbor format
+    def addneighbor(self, uuid, host, backend_port, metric):
         # Add neighbor code goes here
+        self.peers.append({                        
+                        "uuid": uuid,
+                        "host":host,
+                        "backend_port": backend_port,
+                        "metric": metric
+                        })
+
+
+        # maybe add a flag to alert link_state_adv to start sending out
+        # LSA packets
+
+
+
+
+        # and then we will let LSA / elif message =="active message" code block
+        # handle adding the peer to the active neighbor list via
+        #
+        #now that this neighbor node is added to our currnodes neighbor,
+        #
+        #keep alive function will start sending keep alive message to this new neighbor
+
         return
     
 
@@ -129,7 +161,33 @@ class Content_server():
     def link_state_adv(self):
         while self.remain_threads:
             # Perform Link State Advertisement to all your neighbors periodically 
-            pass
+            self.seq += 1
+
+
+            neighbor_metrics = {p['uuid'] : p['metric'] for p in self.peers}
+
+
+
+            lsa_packet = {
+                "message": "Link State Packet",
+                "source_uuid" : self.uuid,
+                "source_name" : self.name,
+                "neighbors": neighbor_metrics, #include a neighbor map here of their uuid and the distance
+                "seq": self.seq
+            }
+            for neighbor in self.peers:
+                ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+
+
+                try :
+                    ul_socket.connect(('127.0.0.1', neighbor['backend_port']))
+                    ul_socket.send((str(lsa_packet)).encode())
+                    ul_socket.close()
+                except socket.error:
+                    pass
+            time.sleep(3) # send every 3 seconds
+
         return
 
     
