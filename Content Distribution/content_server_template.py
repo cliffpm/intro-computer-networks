@@ -159,8 +159,14 @@ class Content_server():
 
 
             # uuid to distance of all neighbors of the current node
-            neighbor_metrics = {p['uuid'] : p['metric'] for p in self.peers}
+            #neighbor_metrics = {p['uuid'] : p['metric'] for p in self.peers}
+            neighbor_metrics = {}
 
+            for p in self.peers:
+                name = self.uuid_to_name.get(p["uuid"])
+                if name:
+                    neighbor_metrics[name] = p["metric"]
+                # else LSA hasnt sent name yet
 
 
             lsa_packet = {
@@ -200,12 +206,13 @@ class Content_server():
 
         sender_node = host[1]
         # host is a tuple of (ip, port) from the node that just sent LSA to us
-        self.uuid_to_seen_seq[sender_uuid] = msg["seq"]
-        self.uuid_to_name[sender_uuid] = msg["source_name"]
-        self.map[msg["source_name"]] = msg["neighbors"]
+
+        # self.uuid_to_seen_seq[sender_uuid] = msg["seq"]
+        # self.uuid_to_name[sender_uuid] = msg["source_name"]
+        # self.map[msg["source_name"]] = msg["neighbors"]
 
         for neighbor in self.peers:
-            if neighbor["backend_port"] == sender_node:
+            if neighbor["uuid"] == sender_uuid:
                 continue 
             
             ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -256,7 +263,8 @@ class Content_server():
                 ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # dont make it a self. variable to avoid race condition
                 try:
                     ul_socket.connect(('127.0.0.1', neighbor["backend_port"]))
-                    packet_sending = {"source_uuid" : self.uuid, "message" : "Alive message"}
+                    packet_sending = {"source_uuid" : self.uuid, "message" : "Alive message", 
+                                      "backend_port" : self.backend_port}
                     ul_socket.send((str(packet_sending)).encode()) # should send it along with our
                     # current node UUID, so that way in timeout_old, we can distingush
                     # which node sent the keep alive so we can update status dead or alive
@@ -293,6 +301,12 @@ class Content_server():
                 current_time = time.time()
                 self.uuid_to_last_alive[sender_uuid] = current_time
                 
+                # neighbors_uuid = set(p["uuid"] for p in self.peers)
+                # if sender_uuid not in neighbors_uuid:
+                # # ....
+                #     pass
+                    
+
 
                 # POPULATING ACTIVE NEIGHBORS LIST IN HERE
 
@@ -310,17 +324,25 @@ class Content_server():
                         
                 
             
+            # WE KEEP TRACK OF NODE NAMES HERE
+
             elif message == "Link State Packet":     # Update the map based on new information, drop if old information
-                #If new information, also flood to other neighbors
-                sender_name = msg_string["source_name"]
-                sender_seq = msg_string["seq"]
-                sender_neighbors = msg_string["neighbors"]
 
                 if sender_uuid not in self.uuid_to_seen_seq or sender_seq > self.uuid_to_seen_seq[sender_uuid]:
                     self.uuid_to_seen_seq[sender_uuid] = sender_seq
-
+                    #If new information, also flood to other neighbors
+                    sender_name = msg_string["source_name"]
+                    sender_seq = msg_string["seq"]
+                    sender_neighbors = msg_string["neighbors"]
                     self.uuid_to_name[sender_uuid] = sender_name # important for correct 'neighbors' command format
                     self.map[sender_name] = sender_neighbors
+                    
+                    # for p in self.peers:
+                    #     if p["uuid"] == sender_uuid:
+                    #         if self.uuid in sender_neighbors:
+                    #             p["metric"] = sender_neighbors[self.uuid]
+
+                    
                     self.link_state_flood(time.time(), client_address, msg_string)
 
             # TODO: IMPLEMENT AFTER
@@ -349,6 +371,8 @@ class Content_server():
                         if self.uuid_to_name[uuid] in self.active_peers:
                             del self.active_peers[self.uuid_to_name[uuid]]
 
+
+                     
                     # can trigger LSA update right here
             
 
@@ -361,9 +385,11 @@ class Content_server():
         # derive the shortest path according to the current link state
         graph = self.map.copy()
         source_node_connections = {}
-        for p in self.peers:
-            neighbor = self.uuid_to_name.get(p["uuid"])
-            source_node_connections[neighbor] = p["metric"]
+        for name, stats in self.active_peers.items():
+            source_node_connections[name] = stats["metric"]
+        # for p in self.peers:
+        #     neighbor = self.uuid_to_name.get(p["uuid"])
+        #     source_node_connections[neighbor] = p["metric"]
         graph[self.name] = source_node_connections
 
         # now this graph includes the source node and its connections
@@ -442,7 +468,7 @@ class Content_server():
                 print(str({"uuid": self.uuid}))
             elif command == "neighbors": # complete this after completed link_state_adv()
                 # Print Neighbor information
-                print(str(self.active_peers))
+                print("{\"neighbors\": " + str(self.active_peers) + "}")
             elif command == "addneighbor":
                 # Update Neighbor List with new neighbor
                 cmd_uuid = command_line[1]
@@ -463,10 +489,10 @@ class Content_server():
                 # Print Map
                 res_map = self.map.copy()
                 res_map[self.name] = {self.uuid_to_name.get(p['uuid'], p['uuid']) : p['metric'] for p in self.peers}
-                print(str(res_map))
+                print("{\"map\": " + str(res_map) + "}")
             elif command == "rank": 
                 # Compute and print the shortest path to each node in POV of source node
-                print(str(self.shortest_path()).encode())
+                print("{\"rank\": " + str(self.shortest_path()) + "}")
 
 if __name__ == "__main__":
     content_server = Content_server(sys.argv[2])
