@@ -2,6 +2,8 @@ import socket, sys
 import ast
 import threading, time
 import random
+import heapq
+
 
 BUFSIZE = 1024  # size of receiving buffer
 ALIVE_SGN_INTERVAL = 0.5  # interval to send alive signal
@@ -42,16 +44,17 @@ class Content_server():
        #   {neighbor name :{uuid: _ , host: _ , backend_port: _ , metric: _}}  
         self.active_peers = {} 
 
-
-
-        #node name : {neighbor name : distance}
+        #node name : {node name : {neighbor name : distance}}
         self.map = {} 
         
         # the last time that node with uuid had sent a keep alive message
         self.uuid_to_last_alive = {} 
         # self.uuid_to_last_alive will keep track of last time that node w
         # uuid had sent a keep alive message, meaning its also our neighbor
-
+       
+       
+       
+        self.uuid_to_seen_seq = {}
 
 
         # i believe we can fill this in the flooding stage
@@ -96,7 +99,7 @@ class Content_server():
         # because prof. said that in lecture
         # but in spec. it says uuid guranteed in config. file
 
-
+     
 
 
 
@@ -144,16 +147,6 @@ class Content_server():
         # maybe add a flag to alert link_state_adv to start sending out
         # LSA packets
 
-
-
-
-        # and then we will let LSA / elif message =="active message" code block
-        # handle adding the peer to the active neighbor list via
-        #
-        #now that this neighbor node is added to our currnodes neighbor,
-        #
-        #keep alive function will start sending keep alive message to this new neighbor
-
         return
     
 
@@ -164,6 +157,8 @@ class Content_server():
             self.seq += 1
 
 
+
+            # uuid to distance of all neighbors of the current node
             neighbor_metrics = {p['uuid'] : p['metric'] for p in self.peers}
 
 
@@ -186,25 +181,69 @@ class Content_server():
                     ul_socket.close()
                 except socket.error:
                     pass
-            time.sleep(3) # send every 3 seconds
+            time.sleep(3) # send LSA packet every 3 seconds
 
         return
 
     
     def link_state_flood(self, send_time, host, msg):
         # If new information then send to all your neighbors, if old information then drop.
+        sender_uuid = msg["source_uuid"]
+
+        # drop old packet
+        if sender_uuid in self.uuid_to_seen_seq and msg["seq"] <= self.uuid_to_seen_seq[sender_uuid]:
+            return
+
+        self.uuid_to_seen_seq[sender_uuid] = msg["seq"]
+        
+        
+
+        sender_node = host[1]
+        # host is a tuple of (ip, port) from the node that just sent LSA to us
+        self.uuid_to_seen_seq[sender_uuid] = msg["seq"]
+        self.uuid_to_name[sender_uuid] = msg["source_name"]
+        self.map[msg["source_name"]] = msg["neighbors"]
+
+        for neighbor in self.peers:
+            if neighbor["backend_port"] == sender_node:
+                continue 
+            
+            ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                ul_socket.connect(('127.0.0.1', neighbor["backend_port"]))
+                ul_socket.send((str(msg)).encode())
+                ul_socket.close()
+            except socket.error:
+                pass
+        
         return
     
 
+
+    # TODO IMPLEMENT THESE LATER (OPTIONAL BUT STILL DO IT)
 
     # use the template dl socket code to send information to all alive neighbors
-    def dead_adv(self, peer):
-        # Advertise death before kill
-        return
+    # def dead_adv(self, peer):
+    #     dead_message = {
+    #         "message": "Death message",
+    #         "source_uuid": self.uuid,
+    #         "source_name": self.name
+    #     }
+
+    #     for neighbor in self.peers:
+    #         ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    #         try:
+    #             ul_socket.connect(('127.0.0.1', neighbor['backend_port']))
+    #             ul_socket.send(str(dead_message).encode())
+    #             ul_socket.close()
+    #         except socket.error:
+    #             pass
+
+    #     return
     
-    def dead_flood(self, send_time, host, peer):
-        # Forward the death message information to other peers
-        return
+    # def dead_flood(self, send_time, host, peer):
+    #     # Forward the death message information to other peers
+    #     return
 
 
 
@@ -217,7 +256,7 @@ class Content_server():
                 ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # dont make it a self. variable to avoid race condition
                 try:
                     ul_socket.connect(('127.0.0.1', neighbor["backend_port"]))
-                    packet_sending = {"uuid" : self.uuid, "message" : "Alive message"}
+                    packet_sending = {"source_uuid" : self.uuid, "message" : "Alive message"}
                     ul_socket.send((str(packet_sending)).encode()) # should send it along with our
                     # current node UUID, so that way in timeout_old, we can distingush
                     # which node sent the keep alive so we can update status dead or alive
@@ -238,55 +277,140 @@ class Content_server():
                 msg_string = ast.literal_eval(msg_string)
                 if isinstance(msg_string, dict):
                     message = msg_string["message"]
-                    sender_uuid = msg_string["uuid"]
+                    sender_uuid = msg_string["source_uuid"]
                 # print("received", connection_socket, client_address, msg_string)
             except socket.timeout:
                 msg_string = ""
                 pass
-
             if message == "":    # empty message
-                pass # do nothing since socket probably failed
-
-
-
+                pass # do nothing
 
             ## might be a bit scuffed because at the time I wrote this block, LSA wasn't written yet
             elif message == "Alive message": # Update the timeout time if known node, otherwise add new neighbor
-                # known_sender = None
-
-                # for neighbor_dict in self.peers:
-                #     neighbor_uuid = neighbor_dict["uuid"]
-                #     if neighbor_uuid == sender_uuid:
-                #         known_sender = neighbor_dict
-                #         break
-                        
-                # if known_sender: # this means that the node that sent keep alive is one of our neighbors
-                #     name = self.uuid_to_name[sender_uuid]
-                #     self.active_peers[name][""]
-                current_time = time.time()
-                self.uuid_to_last_alive[sender_uuid] = current_time
-  
                 
 
 
+                current_time = time.time()
+                self.uuid_to_last_alive[sender_uuid] = current_time
+                
 
+                # POPULATING ACTIVE NEIGHBORS LIST IN HERE
 
-
-
+                if sender_uuid in self.uuid_to_name and self.uuid_to_name[sender_uuid] not in self.active_peers:
+                    # we add to active peers if this node is not in the active neighbors list yet
+                    for p in self.peers:
+                        if p["uuid"] == sender_uuid:
+                            self.active_peers[self.uuid_to_name[sender_uuid]] = {
+                                "uuid" : p["uuid"],
+                                "host": p["host"],
+                                "backend_port" : p["backend_port"],
+                                "metric" : p["metric"]
+                            }
+                            break
+                        
+                
+            
             elif message == "Link State Packet":     # Update the map based on new information, drop if old information
                 #If new information, also flood to other neighbors
-                pass
-            elif message == "Death message": # Delete the node if it sends the message before executing kill.
-                pass
-            # otherwise the msg is dropped
+                sender_name = msg_string["source_name"]
+                sender_seq = msg_string["seq"]
+                sender_neighbors = msg_string["neighbors"]
+
+                if sender_uuid not in self.uuid_to_seen_seq or sender_seq > self.uuid_to_seen_seq[sender_uuid]:
+                    self.uuid_to_seen_seq[sender_uuid] = sender_seq
+
+                    self.uuid_to_name[sender_uuid] = sender_name # important for correct 'neighbors' command format
+                    self.map[sender_name] = sender_neighbors
+                    self.link_state_flood(time.time(), client_address, msg_string)
+
+            # TODO: IMPLEMENT AFTER
+
+            # implement this after, asking prof. bc spec. says we cant do this
+            # elif message == "Death message": # Delete the node if it sends the message before executing kill.
+                
+            #     pass
+            # # otherwise the msg is dropped
 
     def timeout_old(self):
         # drop the neighbors whose information is old
-        print("a")
+        while self.remain_threads:
+            current_time = time.time()
 
+            for uuid in list(self.uuid_to_last_alive):
+                last_seen_time = self.uuid_to_last_alive[uuid]
+                if current_time -last_seen_time > TIMEOUT_INTERVAL:
+                    self.peers = [p for p in self.peers if p["uuid"] != uuid]
+
+                    del self.uuid_to_last_alive[uuid]
+
+                    if uuid in self.uuid_to_name:
+                        if self.uuid_to_name[uuid] in self.map:
+                            del self.map[self.uuid_to_name[uuid]]
+                        if self.uuid_to_name[uuid] in self.active_peers:
+                            del self.active_peers[self.uuid_to_name[uuid]]
+
+                    # can trigger LSA update right here
+            
+
+            time.sleep(ALIVE_SGN_INTERVAL)
+
+
+
+    # Dijkstras shortest path algorithm
     def shortest_path(self):
         # derive the shortest path according to the current link state
+        graph = self.map.copy()
+        source_node_connections = {}
+        for p in self.peers:
+            neighbor = self.uuid_to_name.get(p["uuid"])
+            source_node_connections[neighbor] = p["metric"]
+        graph[self.name] = source_node_connections
+
+        # now this graph includes the source node and its connections
+
+
+
+
+        # this can serve as our distance table. in Dijktras init source = 0
+        # and everything else as infinity distance
         rank = {}
+        # node_name -> shortest distance from source node
+
+        pq = [] # priority queue of unvisited nodes (including source)
+        # contains tuple (weight, name)
+
+        rank[self.name] = 0 # dist = 0 for source node
+        for node in graph:
+            if node == self.name:
+                continue
+            rank[node] = float('inf')
+
+        heapq.heappush(pq, (0, self.name)) # push our source node onto the priority queue
+
+        
+        while pq:
+            curr_weight, curr_name = heapq.heappop(pq)
+
+            if curr_weight > rank[curr_name]:
+                continue # alr found a good path
+
+            if rank[curr_name] == float('inf'):
+                break # if smallest dist is infinity, remaining are also inf
+
+            for neighbor, weight in graph[curr_name].items():
+                if neighbor not in rank:
+                    rank[neighbor] = float('inf') # added this line in case threads unpredict.
+                new_dist = curr_weight + weight
+                if new_dist < rank[neighbor]:
+                    rank[neighbor] = new_dist
+                    heapq.heappush(pq, (new_dist, neighbor))
+                
+        del rank[self.name]
+
+        
+
+        
+
         return rank
 
     
@@ -307,17 +431,42 @@ class Content_server():
             if command == "kill":
                 # Send death message
                 # Kill all threads
+                self.remain_threads = False
+                try:
+                    self.dl_socket.close()
+                except:
+                    pass
+                sys.exit(0) # this allows to exit the main proccess
+
             elif command == "uuid":
-                # Print UUID
                 print(str({"uuid": self.uuid}))
             elif command == "neighbors": # complete this after completed link_state_adv()
                 # Print Neighbor information
+                print(str(self.active_peers))
             elif command == "addneighbor":
                 # Update Neighbor List with new neighbor
+                cmd_uuid = command_line[1]
+                cmd_uuid = cmd_uuid[cmd_uuid.index('=')+1:len(cmd_uuid)]
+
+                cmd_host = command_line[2]
+                cmd_host = cmd_host[cmd_host.index('=')+1:len(cmd_host)]
+
+                cmd_backend_port = command_line[3]
+                cmd_backend_port = cmd_backend_port[cmd_backend_port.index('=')+1:len(cmd_backend_port)]
+
+
+                cmd_metric = command_line[4]
+                cmd_metric = cmd_metric[cmd_metric.index('=')+1:len(cmd_metric)]
+
+                self.addneighbor(cmd_uuid, cmd_host, int(cmd_backend_port), int(cmd_metric))
             elif command == "map":
                 # Print Map
+                res_map = self.map.copy()
+                res_map[self.name] = {self.uuid_to_name.get(p['uuid'], p['uuid']) : p['metric'] for p in self.peers}
+                print(str(res_map))
             elif command == "rank": 
-                # Compute and print the rank
+                # Compute and print the shortest path to each node in POV of source node
+                print(str(self.shortest_path()).encode())
 
 if __name__ == "__main__":
-    content_sever = Content_server(sys.argv[2])
+    content_server = Content_server(sys.argv[2])
