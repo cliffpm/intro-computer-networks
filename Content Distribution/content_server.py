@@ -72,7 +72,7 @@ class Content_server():
                 elif key == "backend_port":
                     self.backend_port = int(value)
                 elif key == "peer_count":
-                    self.peer_count = value
+                    self.peer_count = int(value)
                 elif key.startswith("peer_"):
                     vals = [val.strip() for val in value.split(',')]
                     uuid_t = vals[0]
@@ -459,6 +459,7 @@ class Content_server():
                 # Kill all threads
                 self.remain_threads = False
                 try:
+                    # this addresses threads that are being blocked w/o connection
                     temp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     temp_socket.connect(('127.0.0.1', self.backend_port))
                     temp_socket.close()
