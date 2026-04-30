@@ -174,7 +174,7 @@ class Content_server():
                 except socket.error:
                     #print("socket failed LSA : ", socket.error)
                     continue
-            time.sleep(3) # send LSA packet every 3 seconds
+            time.sleep(2) # send LSA packet every 2 seconds
         return
 
     # this function simply FORWARDS MESSAGES. NO LOGIC MODIFICATION !!
@@ -405,10 +405,18 @@ class Content_server():
                 if current_time -last_seen_time > TIMEOUT_INTERVAL:
                     # self.peers = [p for p in self.peers if p["uuid"] != uuid]
 
-                    del self.uuid_to_last_alive[uuid]
-                    del self.map[uuid]
-                    del self.active_peers_uuid[uuid]
 
+                    
+
+                    del self.uuid_to_last_alive[uuid]
+                    if uuid in self.map:
+                        del self.map[uuid]
+                    if uuid in self.active_peers_uuid:
+                        del self.active_peers_uuid[uuid]
+
+
+                    if uuid in self.uuid_to_seen_seq:
+                        del self.uuid_to_seen_seq[uuid]
                     # if uuid in self.uuid_to_name:
                     #     if self.uuid_to_name[uuid] in self.map:
                     #         del self.map[uuid] # becauase LSA we only rely for NEW information
@@ -509,7 +517,7 @@ class Content_server():
                 sys.exit(0) # this allows to exit the main proccess
 
             elif command == "uuid":
-                print(str({"uuid": self.uuid}))
+                print({"uuid": self.uuid}, flush=True)
             elif command == "neighbors": # complete this after completed link_state_adv()
                 # Print Neighbor information
                 res = {}
@@ -517,7 +525,7 @@ class Content_server():
                     res[self.uuid_to_name[uuid]] = stats
                 
                 #print("{\"neighbors\": " + str(res) + "}", flush=True)
-                print({"neighbors":res})
+                print({"neighbors":res},  flush=True)
             elif command == "addneighbor":
                 # Update Neighbor List with new neighbor
                 cmd_uuid = command_line[1]
@@ -539,6 +547,10 @@ class Content_server():
 
                 return_map = {}
                 for source_uuid, neighbors in self.map.items():
+
+                    if source_uuid not in self.uuid_to_name:
+                        continue
+
                     source_name = self.uuid_to_name[source_uuid] # TODO: potential problem if LSA hasn't arrived yet
                     neighbors_res = {}
                     for destination_uuid, weight in neighbors.items():
@@ -560,8 +572,8 @@ class Content_server():
 
                 # delete all the ones with distance infinity
 
-
-                print("{\"map\": " + str(return_map) + "}")
+                print({"map": return_map}, flush=True)
+                #print("{\"map\": " + str(return_map) + "}")
 
             elif command == "rank": 
                 # Compute and print the shortest path to each node in POV of source node
@@ -580,8 +592,8 @@ class Content_server():
                         del res[name]
                 
 
-
-                print("{\"rank\": " + str(res) + "}")
+                print({"rank" : res}, flush = True)
+                #print("{\"rank\": " + str(res) + "}")
             elif command == "printneighbors":
                 print(str(self.peers))
 
