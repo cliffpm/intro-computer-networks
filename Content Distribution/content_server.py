@@ -165,14 +165,14 @@ class Content_server():
                 "neighbors": neighbor_metrics, #include a neighbor map here of their uuid and the distance
                 "seq": self.seq
             }
-            for uuid, active_neighbor_stats in self.active_peers_uuid.items():
+            for uuid, active_neighbor_stats in list(self.active_peers_uuid.items()):
                 ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 try :
                     ul_socket.connect(('127.0.0.1', active_neighbor_stats["backend_port"]))
                     ul_socket.send((str(lsa_packet)).encode())
                     ul_socket.close()
                 except socket.error:
-                    print("socket failed LSA : ", socket.error)
+                    #print("socket failed LSA : ", socket.error)
                     continue
             time.sleep(3) # send LSA packet every 3 seconds
         return
@@ -182,13 +182,13 @@ class Content_server():
         # If new information then send to all your neighbors, if old information then drop.
         sender_uuid = msg["source_uuid"]
 
-        # drop old packet
-        if sender_uuid in self.uuid_to_seen_seq and msg["seq"] <= self.uuid_to_seen_seq[sender_uuid]:
-            return
+        # drop old packet HANDLED ALREADY
+        # if sender_uuid in self.uuid_to_seen_seq and msg["seq"] <= self.uuid_to_seen_seq[sender_uuid]:
+        #     return
 
-        for uuid, active_stats in self.active_peers_uuid.items():
-            active_uuid = active_stats["uuid"]
-            if active_uuid == sender_uuid: # do not forward to the node we recieved from
+        for uuid, active_stats in list(self.active_peers_uuid.items()):
+           # active_uuid = active_stats[uuid]
+            if uuid == sender_uuid: # do not forward to the node we recieved from
                 continue # technically natively handles but this reduces redundant socket sending
             
             active_backend_port = active_stats["backend_port"]
@@ -198,7 +198,7 @@ class Content_server():
                 ul_socket.send((str(msg)).encode())
                 ul_socket.close()
             except socket.error:
-                print("socket failed LSA FLOOD : ", socket.error)
+                #print("socket failed LSA FLOOD : ", socket.error)
                 continue
         return
     
@@ -242,7 +242,8 @@ class Content_server():
                     ul_socket.connect(('127.0.0.1', neighbor["backend_port"]))
                     packet_sending =    {"source_uuid" : self.uuid,
                                         "message" : "Alive message", 
-                                        "backend_port" : self.backend_port
+                                        "backend_port" : self.backend_port,
+                                        "metric":neighbor["metric"]
                                         }
                     ul_socket.send((str(packet_sending)).encode()) # should send it along with our
                     # current node UUID, so that way in timeout_old, we can distingush
@@ -294,11 +295,33 @@ class Content_server():
                 current_time = time.time()
                 self.uuid_to_last_alive[sender_uuid] = current_time
 
-                # no need for any logic to add to self.peers, because 
-                #   alive is sent to all neighbors, so we can assume that all the nodes
-                #   are properly in self.peers . The only place where a new node can be 
-                #   a new neighbor is in addneighbors(), which automatically adds
-                #   the new node into self.peers
+
+                # need to add logic for new nodes that are just added
+                # ex : node 1 and node 2 never were neighbors.
+
+                #
+                # we ran addneighbors in node1's process to add node 2.
+
+
+                # node 2 sees that it has a incoming alive message from a uuid never seen before
+                #   but we know alive messages sent to neighbors only. this must mean this never before
+                #   seen node (node 2's never seen it) means it should be a neighbor. Therefore we should
+                #   add it to the self.peers of node 2.
+                #
+
+
+                known_uuid = [p["uuid"] for p in self.peers]
+                if sender_uuid not in known_uuid: # this is new
+                    self.peers.append({
+                        "uuid": sender_uuid,
+                        "host": "localhost",
+                        "backend_port": msg_string["backend_port"],
+                        "metric":msg_string["metric"]
+                    })
+
+
+
+            
                     
                 # POPULATING ACTIVE NEIGHBORS LIST IN HERE
                 # if we have the new nodes name (from LSA) AND it is not currently tracked as an active neighbor
@@ -332,7 +355,7 @@ class Content_server():
                         
             # WE KEEP TRACK OF NODE NAMES HERE
             elif message == "Link State Packet":     # Update the map based on new information, drop if old information
-                
+                # print(f"recieved LSA packet from {sender_uuid}")
                 # if uuid hasn't been tracked with a last seen seq, OR the new seq is fresher than the prev seq
                 # then we update only.
                 sender_seq = msg_string["seq"]
@@ -346,14 +369,23 @@ class Content_server():
                     sender_seq = msg_string["seq"]
                     sender_neighbors = msg_string["neighbors"]
 
+
+                    # if sender_uuid == "4166edb6-85b2-4283-ba20-95036842da17":
+                    #     print("we recieved node 4's packet")
+                    #     print(f"name : {sender_name}")
+                    #     print(f"neighbors : {sender_neighbors}")
+                      
+
                     # KEEPING TRACK OF NODE NAMES HERE !!!!!!!
                     self.uuid_to_name[sender_uuid] = sender_name # important for correct 'neighbors' command format
                     self.map[sender_uuid] = sender_neighbors
                     
                     # now that we updated the info we recieved for our current node, we forward it to all
                     #   other active neighbors via flooding.
+                    # print("beginning flooding")
                     self.link_state_flood(time.time(), client_address, msg_string)
-
+               # else:
+                  #  print("if condition failed to update graph and flood")
             # TODO: IMPLEMENT AFTER
             # implement this after, asking prof. bc spec. says we cant do this
             # elif message == "Death message": # Delete the node if it sends the message before executing kill.
@@ -373,14 +405,16 @@ class Content_server():
                     # self.peers = [p for p in self.peers if p["uuid"] != uuid]
 
                     del self.uuid_to_last_alive[uuid]
+                    del self.map[uuid]
+                    del self.active_peers_uuid[uuid]
 
-                    if uuid in self.uuid_to_name:
-                        if self.uuid_to_name[uuid] in self.map:
-                            del self.map[self.uuid_to_name[uuid]] # becauase LSA we only rely for NEW information
-                            #                                           but it does nothing when node gets dropped
-                            #                                           we must manually track it
-                        if uuid in self.active_peers_uuid:
-                            del self.active_peers_uuid[uuid]
+                    # if uuid in self.uuid_to_name:
+                    #     if self.uuid_to_name[uuid] in self.map:
+                    #         del self.map[uuid] # becauase LSA we only rely for NEW information
+                    #         #                                           but it does nothing when node gets dropped
+                    #         #                                           we must manually track it
+                    #     if uuid in self.active_peers_uuid:
+                    #         del self.active_peers_uuid[uuid]
                             
 
 
@@ -499,28 +533,32 @@ class Content_server():
 
                 self.addneighbor(cmd_uuid, cmd_host, int(cmd_backend_port), int(cmd_metric))
             elif command == "map":
-                # Print Map
-                # res_map = self.map.copy()
-                # res_map[self.name] = {self.uuid_to_name.get(p['uuid'], p['uuid']) : p['metric'] for p in self.peers}
-                # print("{\"map\": " + str(res_map) + "}")
+     
 
                 return_map = {}
                 for source_uuid, neighbors in self.map.items():
                     source_name = self.uuid_to_name[source_uuid] # TODO: potential problem if LSA hasn't arrived yet
                     neighbors_res = {}
                     for destination_uuid, weight in neighbors.items():
-                        destination_name = self.uuid_to_name.get(destination_uuid)
+                        destination_name = self.uuid_to_name[destination_uuid]
                         neighbors_res[destination_name] = weight
 
                     return_map[source_name] = neighbors_res
+
                 source_neighbors = {}
                 for uuid, stats in self.active_peers_uuid.items():
                     source_neighbors_name = self.uuid_to_name[uuid]
                     distance = stats["metric"]
                     source_neighbors[source_neighbors_name] = distance
                 
+                
 
                 return_map[self.name] = source_neighbors
+
+
+                # delete all the ones with distance infinity
+
+
                 print("{\"map\": " + str(return_map) + "}")
 
             elif command == "rank": 
@@ -533,7 +571,12 @@ class Content_server():
                     name = self.uuid_to_name[uuid]
                     res[name] = shortest_distance
 
+                temp_res = res.copy()
 
+                for name, distance in temp_res.items():
+                    if distance == float('inf'):
+                        del res[name]
+                
 
 
                 print("{\"rank\": " + str(res) + "}")
