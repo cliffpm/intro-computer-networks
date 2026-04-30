@@ -339,6 +339,7 @@ class Content_server():
                 for p in self.peers:
                     if p["uuid"] == sender_uuid:
                         self.active_peers_uuid[sender_uuid] = {
+                            "uuid": p["uuid"],
                             "host": p["host"],
                             "backend_port" : p["backend_port"],
                             "metric" : p["metric"]
@@ -515,7 +516,8 @@ class Content_server():
                 for uuid, stats in self.active_peers_uuid.items():
                     res[self.uuid_to_name[uuid]] = stats
                 
-                print("{\"neighbors\": " + str(res) + "}")
+                #print("{\"neighbors\": " + str(res) + "}", flush=True)
+                print({"neighbors":res})
             elif command == "addneighbor":
                 # Update Neighbor List with new neighbor
                 cmd_uuid = command_line[1]
