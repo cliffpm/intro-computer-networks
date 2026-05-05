@@ -174,7 +174,7 @@ class Content_server():
                 except socket.error:
                     #print("socket failed LSA : ", socket.error)
                     continue
-            time.sleep(.7) # send LSA packet every 2 seconds
+            time.sleep(TIMEOUT_INTERVAL) # send LSA packet every 2 seconds
         return
 
     # this function simply FORWARDS MESSAGES. NO LOGIC MODIFICATION !!
@@ -204,30 +204,24 @@ class Content_server():
     
 
 
-    # TODO IMPLEMENT THESE LATER (OPTIONAL BUT STILL DO IT)
-
-    # use the template dl socket code to send information to all alive neighbors
-    # def dead_adv(self, peer):
-    #     dead_message = {
-    #         "message": "Death message",
-    #         "source_uuid": self.uuid,
-    #         "source_name": self.name
-    #     }
-
-    #     for neighbor in self.peers:
-    #         ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    #         try:
-    #             ul_socket.connect(('127.0.0.1', neighbor['backend_port']))
-    #             ul_socket.send(str(dead_message).encode())
-    #             ul_socket.close()
-    #         except socket.error:
-    #             pass
-
-    #     return
+    def dead_flood(self, send_time, host, msg):
+        
+        sender_uuid = msg["source_uuid"]
+        for uuid, stats in list(self.active_peers_uuid.items()):
+            if uuid == sender_uuid:
+                continue  # do not forward dead to node that just told us death
+            
+            active_backend_port = stats["backend_port"]
+            ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                ul_socket.connect(('127.0.0.1',active_backend_port))
+                ul_socket.send((str(msg).encode()))
+                ul_socket.close()
+            except socket.error:
+                continue
     
-    # def dead_flood(self, send_time, host, peer):
-    #     # Forward the death message information to other peers
-    #     return
+
+
 
 
 
@@ -257,6 +251,35 @@ class Content_server():
             time.sleep(ALIVE_SGN_INTERVAL)
         return
     
+
+
+
+    def dead_adv(self, dead_uiud):
+        
+        death_message = {
+            "message" : "Death message",
+            "dead_uuid" : dead_uiud,
+            "source_uuid" : self.uuid,
+            "seq" : self.seq
+        }
+
+        for uuid, stats in list(self.active_peers_uuid.items()):
+            ul_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                ul_socket.connect((('127.0.0.1', stats["backend_port"])))
+                ul_socket.send(str(death_message).encode())
+                ul_socket.close()
+            except socket.error:
+                pass
+    
+
+    
+
+
+    
+
+
+
    
    ## THIS IS THE RECEIVE FUNCTION THAT IS RECEIVING THE PACKETS
     def listen(self):
@@ -381,6 +404,23 @@ class Content_server():
                     self.link_state_flood(time.time(), client_address, msg_string)
 
 
+            elif message == "Death message":
+                dead_uuid = msg_string["dead_uuid"]
+                if dead_uuid in self.map:
+                    del self.map[dead_uuid]
+                
+                if dead_uuid in self.active_peers_uuid:
+                    del self.active_peers_uuid[dead_uuid]
+                
+                for source_uuid in self.map:
+                    if dead_uuid in self.map[source_uuid]:
+                        del self.map[source_uuid][dead_uuid]
+                
+                self.dead_flood(time.time(), client_address, msg_string)
+                    
+
+
+
 
             # NEW
             elif message == "add neighbor":
@@ -441,6 +481,7 @@ class Content_server():
             for uuid in list(self.uuid_to_last_alive.keys()):
                 last_seen_time = self.uuid_to_last_alive[uuid]
                 if current_time -last_seen_time > TIMEOUT_INTERVAL:
+                    self.dead_adv(uuid)
                     # self.peers = [p for p in self.peers if p["uuid"] != uuid]
 
 
@@ -533,6 +574,7 @@ class Content_server():
             if command == "kill":
                 # Send death message
                 # Kill all threads
+                self.dead_adv(self.uuid)
                 self.remain_threads = False
                 try:
                     # this addresses threads that are being blocked w/o connection
