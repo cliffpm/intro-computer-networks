@@ -34,14 +34,10 @@ class Content_server():
         self.backend_port = None
         self.peer_count = None
         self.seq = 0 # use this for LSA to determine 'recent'ness
-
-        # Create all the data structures to store various variables
         self.peers = [] # current neighbor of this node
-       
-       #   {neighbor name :{uuid: _ , host: _ , backend_port: _ , metric: _}}  
-        self.active_peers = {} 
-        self.active_peers_uuid = {}
 
+       #   {neighbor name :{uuid: _ , host: _ , backend_port: _ , metric: _}}  
+        self.active_peers_uuid = {}
 
         #node name : {node name : {neighbor name : distance}}
         self.map = {} 
@@ -52,8 +48,7 @@ class Content_server():
         # uuid -> last sequence number
         self.uuid_to_seen_seq = {}
         
-
-        # uuid -> name . This fills when we get an LSA packet
+        # uuid -> name . For expected formatting
         self.uuid_to_name = {} 
 
         with open(conf_file_addr, "r") as f:
@@ -86,14 +81,7 @@ class Content_server():
                         "metric": distance_t
                     })
 
-
-        # maybe handle case if uuid is not found ?
-        # because prof. said that in lecture
-        # but in spec. it says uuid guranteed in config. file
-
         self.uuid_to_name[self.uuid] = self.name
-
-
 
         # create the receive socket . This socket is for recieving from the server to client
         self.dl_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -101,32 +89,11 @@ class Content_server():
         self.dl_socket.bind(('127.0.0.1', self.backend_port)) #YOU NEED TO READ THIS FROM CONFIGURATION FILE
         self.dl_socket.listen(100)
 
-     
-
-
-        # Extract neighbor information and populate the initial variables - believe I did this above
-
-
-
-        # Update the map - I can only update it once I do link-state-advertisement
-        # so I think we build the map in the link_state_adv() function
-
-
-
-
-        # Initialize link state advertisement that repeats using a neighbor variable
-        # self.link_state_adv() # probably not right here . deadlock since thread flag not on
-        
-       # print("Initial setting complete")
-
         self.remain_threads = True
         time.sleep(ALIVE_SGN_INTERVAL)
-        self.alive() # parallel code
+        self.alive() 
         return
 
-
-    # note code came originally without uuid as a parameter,
-    # but it should be included to follow expected neighbor format
     def addneighbor(self, uuid, host, backend_port, metric):
         # Add neighbor code goes here
         self.peers.append({                        
@@ -137,19 +104,11 @@ class Content_server():
                         })
         # we let population of active neighbor logic to be handled
         #   in the listen() function if message == "alive"
-
-        # maybe add a flag to alert link_state_adv to start sending out
-        # LSA packets
         return
     
-
-    # this is sending updates every 30 seconds or so, so the graph is most updated
-    #increment sequence number in here. 
     # IMPORTANT: send LSA packets to only ACTIVE neighbors only
     def link_state_adv(self):
         while self.remain_threads:
-            # print("sending LSA packet ...")
-            # Perform Link State Advertisement to all your neighbors periodically 
             self.seq += 1
 
             neighbor_metrics = {}
@@ -198,7 +157,6 @@ class Content_server():
                 ul_socket.send((str(msg)).encode())
                 ul_socket.close()
             except socket.error:
-                #print("socket failed LSA FLOOD : ", socket.error)
                 continue
         return
     
