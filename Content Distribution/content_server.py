@@ -6,7 +6,7 @@ import heapq
 
 
 BUFSIZE = 1024  # size of receiving buffer
-ALIVE_SGN_INTERVAL = 0.5  # interval to send alive signal
+ALIVE_SGN_INTERVAL = 0.1  # interval to send alive signal
 TIMEOUT_INTERVAL = 10*ALIVE_SGN_INTERVAL
 UPSTREAM_PORT_NUMBER = 1111 # socket number for UL transmission
 
@@ -117,10 +117,10 @@ class Content_server():
         # Initialize link state advertisement that repeats using a neighbor variable
         # self.link_state_adv() # probably not right here . deadlock since thread flag not on
         
-        print("Initial setting complete")
+       # print("Initial setting complete")
 
         self.remain_threads = True
-        time.sleep(2)
+        time.sleep(ALIVE_SGN_INTERVAL)
         self.alive() # parallel code
         return
 
@@ -174,7 +174,7 @@ class Content_server():
                 except socket.error:
                     #print("socket failed LSA : ", socket.error)
                     continue
-            time.sleep(2) # send LSA packet every 2 seconds
+            time.sleep(.7) # send LSA packet every 2 seconds
         return
 
     # this function simply FORWARDS MESSAGES. NO LOGIC MODIFICATION !!
@@ -344,12 +344,6 @@ class Content_server():
                             "backend_port" : p["backend_port"],
                             "metric" : p["metric"]
                         }
-                        # self.active_peers[self.uuid_to_name[sender_uuid]] = {
-                        #     "uuid" : p["uuid"],
-                        #     "host": p["host"],
-                        #     "backend_port" : p["backend_port"],
-                        #     "metric" : p["metric"]
-                        # }
                         break
                 #else:
                   #  print("condition to populate active peers failed")
@@ -385,6 +379,45 @@ class Content_server():
                     #   other active neighbors via flooding.
                     # print("beginning flooding")
                     self.link_state_flood(time.time(), client_address, msg_string)
+
+
+
+            # NEW
+            elif message == "add neighbor":
+                        
+                self.peers.append({                        
+                "uuid": msg_string["uuid"],
+                "host": '127.0.0.1',
+                "backend_port": msg_string["backend_port"],
+                "metric": msg_string["metric"]
+                })
+
+                # new . we have name in this implementation so update uuid to name
+                name = msg_string["name"]
+                self.uuid_to_name[msg_string["uuid"]] = name 
+
+
+                # self.seq is init with 0 for each process. increment for each LSA packet already handled, don't need to do it here
+                neighbor_metrics = {}
+
+                for uuid, stats in self.active_peers_uuid.items():
+                    active_neighbor_metric = stats["metric"]
+                    neighbor_metrics[uuid] = active_neighbor_metric
+
+                self.map[sender_uuid] = neighbor_metrics
+
+                lsa_packet_temp = {
+                    "message": "Link State Packet",
+                    "source_uuid" : self.uuid,
+                    "source_name" : self.name,
+                    "neighbors": neighbor_metrics, #include a neighbor map here of their uuid and the distance
+                    "seq": self.seq
+                }
+
+                self.link_state_flood(time.time(), client_address, str(lsa_packet_temp))
+
+
+
                # else:
                   #  print("if condition failed to update graph and flood")
             # TODO: IMPLEMENT AFTER
@@ -399,7 +432,12 @@ class Content_server():
             current_time = time.time()
             # if uuid not in self.uuid_to_last_alive:
             #     continue
-        
+
+
+            # all we do is delete the old node from our local process' data structures,
+            # but this needs to be updated to all other nodes/processes to ensure no stale data
+
+
             for uuid in list(self.uuid_to_last_alive.keys()):
                 last_seen_time = self.uuid_to_last_alive[uuid]
                 if current_time -last_seen_time > TIMEOUT_INTERVAL:
@@ -407,29 +445,24 @@ class Content_server():
 
 
                     
-
-                    del self.uuid_to_last_alive[uuid]
+                    if uuid in self.uuid_to_last_alive:
+                        del self.uuid_to_last_alive[uuid]
                     if uuid in self.map:
                         del self.map[uuid]
                     if uuid in self.active_peers_uuid:
                         del self.active_peers_uuid[uuid]
-
-
                     if uuid in self.uuid_to_seen_seq:
                         del self.uuid_to_seen_seq[uuid]
-                    # if uuid in self.uuid_to_name:
-                    #     if self.uuid_to_name[uuid] in self.map:
-                    #         del self.map[uuid] # becauase LSA we only rely for NEW information
-                    #         #                                           but it does nothing when node gets dropped
-                    #         #                                           we must manually track it
-                    #     if uuid in self.active_peers_uuid:
-                    #         del self.active_peers_uuid[uuid]
-                            
 
 
+                    # delete from other neighbors nodes
+                    for source_id in self.map:
+                        if uuid in self.map[source_id]:
+                            del self.map[source_id][uuid]
+                        
                      
                     # can trigger LSA update right here
-            
+                    # dead flood
 
             time.sleep(ALIVE_SGN_INTERVAL)
 
@@ -527,6 +560,9 @@ class Content_server():
                 #print("{\"neighbors\": " + str(res) + "}", flush=True)
                 print({"neighbors":res},  flush=True)
             elif command == "addneighbor":
+                #
+                # 
+                #
                 # Update Neighbor List with new neighbor
                 cmd_uuid = command_line[1]
                 cmd_uuid = cmd_uuid[cmd_uuid.index('=')+1:len(cmd_uuid)]
@@ -542,6 +578,23 @@ class Content_server():
                 cmd_metric = cmd_metric[cmd_metric.index('=')+1:len(cmd_metric)]
 
                 self.addneighbor(cmd_uuid, cmd_host, int(cmd_backend_port), int(cmd_metric))
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+                message = {
+                    "message" : "add neighbor",
+                    "uuid" : self.uuid,
+                    "backend_port": self.backend_port,
+                    "name" : self.name,
+                    "metric" : cmd_metric
+                }
+
+                try:
+                    s.connect(('127.0.0.1', cmd_backend_port))
+                    s.send(message.encode())
+                except:
+                    pass
+                
+
             elif command == "map":
      
 
