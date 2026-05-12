@@ -115,7 +115,7 @@ class Content_server():
                     ul_socket.close()
                 except socket.error:
                     continue
-            time.sleep(TIMEOUT_INTERVAL) # send LSA packet every 2 seconds
+            time.sleep(2) # send LSA packet every 2 seconds
         return
 
     # this function simply FORWARDS MESSAGES. NO LOGIC MODIFICATION !!
@@ -139,7 +139,6 @@ class Content_server():
         return
     
 
-
     def dead_flood(self, send_time, host, msg):
         
         sender_uuid = msg["source_uuid"]
@@ -156,11 +155,6 @@ class Content_server():
             except socket.error:
                 continue
     
-
-
-
-
-
 
     def keep_alive(self):
         # Tell that you are alive to all your neighbors, periodically.
@@ -187,8 +181,6 @@ class Content_server():
             time.sleep(ALIVE_SGN_INTERVAL)
         return
     
-
-
 
     def dead_adv(self, dead_uiud):
         
@@ -240,11 +232,8 @@ class Content_server():
                 current_time = time.time()
                 self.uuid_to_last_alive[sender_uuid] = current_time
 
-
                 # need to add logic for new nodes that are just added
                 # ex : node 1 and node 2 never were neighbors.
-
-                #
                 # we ran addneighbors in node1's process to add node 2.
 
 
