@@ -117,16 +117,33 @@ class Server():
     def transmit(self, file_name, addr):
         # create a udp socket for transmission
         # divide the file into several parts
-        #transmit_file = self.read_file(file_name)
-        #packet_num = len(transmit_file)
+        transmit_file = self.read_file(file_name) # the data we iterate over
+        packet_num = len(transmit_file)
         # use socket to send packet number to the receiver
-        #ack = 0
-        #print("sending packet num", packet_num, "to", addr)
-        tx_socket.sendto(str(packet_num).encode(), addr)
-        try:
-            #Receive ACK from the same tx_socket and increment window
-        except socket.timeout:
-            pass
+        ack = 0
+        timeout_array = [0]*packet_num
+        left_ptr = 0
+        right_ptr = min(packet_num, WINDOW_SIZE)
+
+        lock = threading.lock() # because transmit and ack thread use left and right pointer
+                                #   transmit reads it to iterate through transmit_file
+                                #   ack thread writes (updates) to left and right pointer
+    
+
+
+
+        tx_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        while True:
+            try:
+                tx_socket.sendto(str(packet_num).encode(), addr)
+                data, addr_from = tx_socket.recvfrom(BUFSIZE)
+                packet = json.loads(data.decode())
+                if packet["type"] == "ACK": # we recieved the acknowledgement and are ready to shift window
+                    break
+                #Receive ACK from the same tx_socket and increment window
+            except socket.timeout:
+                continue
+        
         # use a transmit window to determine which file should be transmitted
 
         # use a time-out array to record which file is time-out and need to be transmitted again
