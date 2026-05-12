@@ -12,48 +12,107 @@ TIMEOUT = 0.5   # timeout time
 class Server():
     def __init__(self, config_file):
         #Read the config file and initialize the port, peer_num, peer_info, content_info from the config file
+        self.data = json.load(config_file)
+        self.port = self.data["port"]
+        self.peer_num = self.data["peers"]
+        self.peers = self.config.get("peer_info", [])
 
         # establish a socket according to the information
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #NOTE THAT THE SOCK_DGRAM will ensure your socket is UDP
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.bind(("", self.port)) #This is the only port you can use to receive
-        
+        self.server_socket.bind(("", self.port)) #This is the only port you can use to receive, IP address ?
         self.server_socket.settimeout(1)   # timeout value
-
         self.remain_threads = True
         self.cli()
         return
     
     def find_file(self, file_name):
         #A function to find the peer with the file you want!
+        for peer_dict in self.peers:
+            for curr_filename in peer_dict["content_info"]:
+                if curr_filename == file_name:
+                    return (peer_dict["hostname"], peer_dict["port"])
+        return (None, None)
 
-    
+    # reciever (client) of protocol
     def load_file(self, file_name):
+        hostname, port = self.find_file(file_name)
+
         # find which server has the file
         # establish a client socket for downloading file
         self.cl_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 
         
         # use a connect flag to determine if the file name is sent correctly
-        
-        #Initiate three-way handshake and use a connect flag
-        
-        while not connect_flag:
-            try:
-                # handshake
-            except socket.timeout:
-                # handshake failed
+        connect_flag = False
       
+        #Initiate three-way handshake and use a connect flag
+        num_packets = 0
+        while not connect_flag:
+            self.cl_socket.connect((hostname, port))
+            SYN_packet = {
+                "filename" : file_name,
+                "type" : "SYN",
+            }
+            self.cl_socket.send(json.dumps(SYN_packet).encode())
+            try:
+                data, addr = self.cl_socket.recvfrom(BUFSIZE)
+                response_dict = json.loads(data.decode())
+
+                if response_dict["type"] == "SYN-ACK":
+                    num_packets = response_dict["total_packets"]
+                    connect_flag = True
+
+            except socket.timeout:
+                continue
+        
         # the receiver keeps a record for which part has been acked
+        recieved_table = {}
 
         # start receiving file
+        
+        while len(recieved_table) < num_packets:
+            try:
+                data, address = self.cl_socket.recvfrom(BUFSIZE)
+                recieved_packet = json.loads(data.decode())
+                if recieved_packet["type"] == "DATA":
+                    sequence_number = recieved_packet["sequence"]
+                    recieved_table[sequence_number] = recieved_packet["data"]
+                    ACK_packet = {
+                        "type": "ACK",
+                        "sequence" : sequence_number
+                    }
+                    self.cl_socket.send((json.dumps(ACK_packet)).encode())
+            except socket.timeout:
+                continue
+
 
         # transmission complete, close socket
+        self.cl_socket.close()
 
+
+        sort_sequence = sorted(recieved_table.keys())
+        corrected_datastream = b"".join([recieved_table[i] for i in sort_sequence])
+        try:
+            with open(file_name,"wb") as f:
+                f.write(corrected_datastream)
+        except Exception:
+            pass
         # write the file
         
     def read_file(self, file_name):
         #You can write a function that takes the file to be transmitted and converts into chunks of packet_size
-        return transmit_file
+        transmitted_file = []
+        try:
+            with open(file_name, 'rb') as f:
+                while True:
+                    bit_data = f.read(PKTSIZE)
+                    if not bit_data:
+                        break
+                    transmitted_file.append(bit_data)
+            return transmitted_file
+        except FileNotFoundError:
+            return None
+        
 
     def transmit(self, file_name, addr):
         # create a udp socket for transmission
@@ -97,8 +156,8 @@ class Server():
             if file_name == "":
                 pass
             else:   # start transmission
-                ;#Create a transmit thread (HINT : you can have a large array of transmit threads if you want) and start it
-                
+                #Create a transmit thread (HINT : you can have a large array of transmit threads if you want) and start it
+                # tx_thread = threading.Thread(target=)
         return
     
     def cli(self):  # cli interface for input of the file name
