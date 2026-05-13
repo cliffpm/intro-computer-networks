@@ -2,6 +2,7 @@ import socket, sys
 import json
 import time
 import threading
+import base64
 
 BUFSIZE = 10202  # size of receiving buffer
 PKTSIZE = 10200  # number of bytes in a packet
@@ -15,7 +16,7 @@ class Server():
         self.data = json.load(config_file)
         self.port = self.data["port"]
         self.peer_num = self.data["peers"]
-        self.peers = self.config.get("peer_info", [])
+        self.peers = self.data.get("peer_info", [])
 
         # establish a socket according to the information
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #NOTE THAT THE SOCK_DGRAM will ensure your socket is UDP
@@ -76,7 +77,7 @@ class Server():
                 recieved_packet = json.loads(data.decode())
                 if recieved_packet["type"] == "DATA":
                     sequence_number = recieved_packet["sequence"]
-                    recieved_table[sequence_number] = recieved_packet["data"]
+                    recieved_table[sequence_number] = base64.b64decode(recieved_packet["data"])
                     ACK_packet = {
                         "type": "ACK",
                         "sequence" : sequence_number
@@ -125,24 +126,27 @@ class Server():
         left_ptr = 0
         right_ptr = min(packet_num, WINDOW_SIZE)
 
-        lock = threading.lock() # because transmit and ack thread use left and right pointer
+        lock = threading.Lock() # because transmit and ack thread use left and right pointer
                                 #   transmit reads it to iterate through transmit_file
                                 #   ack thread writes (updates) to left and right pointer
-    
+
 
 
 
         tx_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        while True:
-            try:
-                tx_socket.sendto(str(packet_num).encode(), addr)
-                data, addr_from = tx_socket.recvfrom(BUFSIZE)
-                packet = json.loads(data.decode())
-                if packet["type"] == "ACK": # we recieved the acknowledgement and are ready to shift window
-                    break
-                #Receive ACK from the same tx_socket and increment window
-            except socket.timeout:
-                continue
+        tx_socket.settimeout(TIMEOUT) # to avoid blocking
+        SYN_ACK_packet = {
+            "type" : "SYN-ACK",
+            "total_packets" : packet_num
+        }
+        tx_socket.sendto(json.dumps(SYN_ACK_packet).encode(), addr)
+        # while True:
+        #     try:
+        #         tx_socket.sendto(json.dumps(SYN_ACK_packet).encode(), addr)
+        #         break
+        #         #Receive ACK from the same tx_socket and increment window
+        #     except socket.timeout:
+        #         continue
         
         # use a transmit window to determine which file should be transmitted
 
@@ -151,17 +155,60 @@ class Server():
         
         def transmit_thread():
             #Takes the transmit window and transmits every packet that is allowed to be transmitted
+            
+            while left_ptr < packet_num:
+                with lock:
+                    for i in range(left_ptr, right_ptr):
+                        current_time = time.time()
+                        if timeout_array[i] != -1 and ((timeout_array[i] > 0 and current_time - timeout_array[i]  > TIMEOUT) or (timeout_array[i] == 0)):
+                            # needs to retransmit
+                            packet = {
+                                "type" : "DATA",
+                                "sequence" : i,
+                                "data" : base64.b64encode(transmit_file[i]).decode('utf-8') # need to use b64 encode / dec. because of socket str() .encode()
+                            }
+                            tx_socket.sendto(json.dumps(packet).encode(), addr)
+                            timeout_array[i] = current_time
+                time.sleep(.001)
             return
         
         def ack_thread():
+            nonlocal left_ptr, right_ptr
             #Receives acknowledgement and updates the transmit window with sendable packets
-        
-        #Create TX and RX threads and start doing it
+            while left_ptr < packet_num:
+                try:
+                    data, addr_temp = tx_socket.recvfrom(BUFSIZE)
+                    packet = json.loads(data.decode())
+                    if packet["type"] == "ACK":
+                        seq = packet["sequence"]
 
+                        with lock:
+                            #if 0 <= seq < packet_num: # safety check for in bounds indexing
+                            timeout_array[seq] = -1 # recieved this file
+                            
+                            while left_ptr < packet_num and timeout_array[left_ptr] == -1:
+                                left_ptr += 1
+                            
+                            right_ptr = min(left_ptr + WINDOW_SIZE, packet_num)
+                except socket.timeout:
+                    continue
+        #Create TX and RX threads and start doing it
+        tx_thread = threading.Thread(target=transmit_thread)
+        ak_thread = threading.Thread(target=ack_thread)
+
+        tx_thread.start()
+        ak_thread.start()
+
+        tx_thread.join()
+        ak_thread.join()
+
+
+        tx_socket.close()
         #When done transmitting, close the threads.
 
     def listener(self): # listen to the socket to see if there's any transmission request
         #Do any initializations that you want
+        self.active_tx_threads = []
         while self.remain_threads:
             file_name = ""
             try:
@@ -173,8 +220,12 @@ class Server():
             if file_name == "":
                 pass
             else:   # start transmission
-                #Create a transmit thread (HINT : you can have a large array of transmit threads if you want) and start it
-                # tx_thread = threading.Thread(target=)
+                req = json.loads(file_name.decode())
+                if req["type"] == "SYN":
+                    target_file = req["filename"]
+                    tx_thread = threading.Thread(target= self.transmit, args=(target_file, addr))
+                    self.active_tx_threads.append(tx_thread)
+                    tx_thread.start()
         return
     
     def cli(self):  # cli interface for input of the file name
@@ -185,8 +236,14 @@ class Server():
             command_line = input()
             if command_line == "kill":  # for debugging purpose
                 #Do the kill stuff
+                self.remain_threads = False
+                try: self.server_socket.close()
+                except:
+                    pass
                 return
             #Otherwise it is a file name!
+            self.load_file(command_line)
+
         #Exit stuff if you have some?
         return
 
