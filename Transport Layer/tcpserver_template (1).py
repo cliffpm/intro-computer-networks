@@ -3,6 +3,8 @@ import json
 import time
 import threading
 import base64
+from queue import Queue, Empty
+
 
 BUFSIZE = 10202  # size of receiving buffer
 PKTSIZE = 10200  # number of bytes in a packet
@@ -13,7 +15,8 @@ TIMEOUT = 0.5   # timeout time
 class Server():
     def __init__(self, config_file):
         #Read the config file and initialize the port, peer_num, peer_info, content_info from the config file
-        self.data = json.load(config_file)
+        with open(config_file, 'r') as f:
+            self.data = json.load(f)
         self.port = self.data["port"]
         self.peer_num = self.data["peers"]
         self.peers = self.data.get("peer_info", [])
@@ -115,7 +118,7 @@ class Server():
             return None
         
 
-    def transmit(self, file_name, addr):
+    def transmit(self, file_name, addr, q):
         # create a udp socket for transmission
         # divide the file into several parts
         transmit_file = self.read_file(file_name) # the data we iterate over
@@ -177,20 +180,22 @@ class Server():
             #Receives acknowledgement and updates the transmit window with sendable packets
             while left_ptr < packet_num:
                 try:
-                    data, addr_temp = tx_socket.recvfrom(BUFSIZE)
-                    packet = json.loads(data.decode())
-                    if packet["type"] == "ACK":
-                        seq = packet["sequence"]
+                    packet = q.get(timeout=TIMEOUT)
+                    seq = packet["sequence"]
+                    # data, addr_temp = #tx_socket.recvfrom(BUFSIZE)
+                    # packet = json.loads(data.decode())
+                    # if packet["type"] == "ACK":
+                    #     seq = packet["sequence"]
 
-                        with lock:
-                            #if 0 <= seq < packet_num: # safety check for in bounds indexing
-                            timeout_array[seq] = -1 # recieved this file
-                            
-                            while left_ptr < packet_num and timeout_array[left_ptr] == -1:
-                                left_ptr += 1
-                            
-                            right_ptr = min(left_ptr + WINDOW_SIZE, packet_num)
-                except socket.timeout:
+                    with lock:
+                        #if 0 <= seq < packet_num: # safety check for in bounds indexing
+                        timeout_array[seq] = -1 # recieved this file
+                        
+                        while left_ptr < packet_num and timeout_array[left_ptr] == -1:
+                            left_ptr += 1
+                        
+                        right_ptr = min(left_ptr + WINDOW_SIZE, packet_num)
+                except Empty:
                     continue
         #Create TX and RX threads and start doing it
         tx_thread = threading.Thread(target=transmit_thread)
@@ -206,27 +211,54 @@ class Server():
         tx_socket.close()
         #When done transmitting, close the threads.
 
+
+
+    # server side listening for SYN requests from client
+
+
+    # important ! use only the one self.server_socket
     def listener(self): # listen to the socket to see if there's any transmission request
         #Do any initializations that you want
-        self.active_tx_threads = []
+
+        self.active_trans = {} # maps tuple (ip, port) : queue for acknowedgement packets
+
         while self.remain_threads:
-            file_name = ""
             try:
-                file_name, addr = self.server_socket.recvfrom(BUFSIZE)
-                #Receive the file name and requesting address from the UDP
-            except socket.timeout:
-                pass
+                data, address = self.server_socket.recvfrom(BUFSIZE)
+                packet = json.loads(data.decode())
             
-            if file_name == "":
-                pass
-            else:   # start transmission
-                req = json.loads(file_name.decode())
-                if req["type"] == "SYN":
-                    target_file = req["filename"]
-                    tx_thread = threading.Thread(target= self.transmit, args=(target_file, addr))
-                    self.active_tx_threads.append(tx_thread)
+                if packet["type"] == "SYN":
+                    q = Queue()
+                    self.active_trans[address] = q
+                    dest_file = packet["filename"]
+                    tx_thread = threading.Thread(target=self.transmit, args = (dest_file, address, q))
                     tx_thread.start()
+                elif packet["type"] == "ACK":
+                    if address in self.active_trans:
+                        self.active_trans[address].put(packet)
+            except socket.timeout:
+                continue
+
         return
+        # self.active_tx_threads = []
+        # while self.remain_threads:
+        #     file_name = ""
+        #     try:
+        #         file_name, addr = self.server_socket.recvfrom(BUFSIZE)
+        #         #Receive the file name and requesting address from the UDP
+        #     except socket.timeout:
+        #         pass
+            
+        #     if file_name == "":
+        #         pass
+        #     else:   # start transmission
+        #         req = json.loads(file_name.decode())
+        #         if req["type"] == "SYN":
+        #             target_file = req["filename"]
+        #             tx_thread = threading.Thread(target= self.transmit, args=(target_file, addr))
+        #             self.active_tx_threads.append(tx_thread)
+        #             tx_thread.start()
+        # return
     
     def cli(self):  # cli interface for input of the file name
         listen_thread = threading.Thread(target=self.listener)
@@ -242,6 +274,10 @@ class Server():
                     pass
                 return
             #Otherwise it is a file name!
+
+
+            # kill if file name incorrect ? later
+
             self.load_file(command_line)
 
         #Exit stuff if you have some?
