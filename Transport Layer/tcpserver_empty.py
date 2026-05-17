@@ -69,11 +69,11 @@ class Server():
                 if packet["type"] == "COUNT":
                     packet_num = packet["count"]
 
-                    COUNT_packet = {
-                        "type": "COUNT"
+                    COUNT_ACK_packet = {
+                        "type": "COUNT-ACK"
                     }
 
-                    self.cl_socket.sendto(json.dumps(COUNT_packet).encode(), (hostname, port))
+                    self.cl_socket.sendto(json.dumps(COUNT_ACK_packet).encode(), (hostname, port))
             except socket.timeout:
                 continue
       
@@ -87,10 +87,12 @@ class Server():
                 message, address = self.cl_socket.recvfrom(BUFSIZE)
 
                 packet = json.loads(message.decode())
+                if packet["type"] == "FIN":
+                    break
                 if packet["type"] != "DATA":
                     continue
                     
-                seq = packet["sequence"]
+                seq = packet["seq"]
 
                 if seq not in recieved:
                     data = bytes.fromhex(packet["data"]) # because we stored as hex in JSON 
@@ -126,6 +128,7 @@ class Server():
                 if not chunks:
                     break
                 transmit_file.append({
+                    "type" : "DATA",
                     "seq" : seq,
                     "data" : chunks.hex() # since JSON does not natively support raw binary data
                 })
@@ -146,10 +149,14 @@ class Server():
         timeout_array = [False] * packet_num
         timers = [0] * packet_num
         tx_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        tx_socket.settimeout(TIMEOUT)
         #print("sending packet num", packet_num, "to", addr)
-        
+        COUNT_packet = {
+            "type" : "COUNT", 
+            "count" : packet_num
+        }
         while not count_acknowledged:
-            tx_socket.sendto(str(packet_num).encode(), addr) # sends the packet number
+            tx_socket.sendto(json.dumps(COUNT_packet).encode(), addr) # sends the packet number
             try:
                 message, address = tx_socket.recvfrom(BUFSIZE)
                 packet = json.loads(message.decode())
@@ -172,7 +179,7 @@ class Server():
             nonlocal next_ptr
             nonlocal base
             while base < packet_num:
-                lock.aquire()
+                lock.acquire()
 
                 while (next_ptr < packet_num and next_ptr < base + WINDOW_SIZE):
                     tx_socket.sendto(json.dumps(transmit_file[next_ptr]).encode(), addr)
@@ -222,6 +229,9 @@ class Server():
         tx_thread =threading.Thread(target=transmit_thread)
         rx_thread =threading.Thread(target=ack_thread)
 
+        tx_thread.start()
+        rx_thread.start()
+
         tx_thread.join()
         rx_thread.join()
 
@@ -235,14 +245,19 @@ class Server():
             file_name = ""
             try:
                 file_name, addr = self.server_socket.recvfrom(BUFSIZE)
+                packet = json.loads(file_name.decode())
+                if packet["type"] == "REQUEST":
+                    file_name = packet["file"]
+                    tx_thread = threading.Thread(target = self.transmit, args=(file_name, addr))
+                    tx_thread.start()
                 #Receive the file name and requesting address from the UDP
             except socket.timeout:
-                pass
+                continue
             
-            if file_name == "":
-                pass
-            else:   # start transmission
-                pass#Create a transmit thread (HINT : you can have a large array of transmit threads if you want) and start it
+            # if file_name == "":
+            #     continue
+            # else:   # start transmission
+            #     pass#Create a transmit thread (HINT : you can have a large array of transmit threads if you want) and start it
                 
         return
     
@@ -253,8 +268,18 @@ class Server():
         while self.remain_threads:
             command_line = input()
             if command_line == "kill":  # for debugging purpose
+                self.remain_threads =False
+                self.server_socket.close()
+                break
+          
+
+
+            download_thread = threading.Thread(target=self.load_file, args= (command_line,))
+            download_thread.start()
+
                 #Do the kill stuff
-                return
+        
+        listen_thread.join()
             #Otherwise it is a file name!
         #Exit stuff if you have some?
         return
