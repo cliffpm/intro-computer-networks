@@ -9,10 +9,10 @@ print()
 print("=" * 100)
 print("===> Test case 3.1. Large File transfer test without packet loss")
 
-execution_dir_1 = '/18441_project3/localtest/node1/'
-execution_dir_2 = '/18441_project3/localtest/node2/'
+execution_dir_1 = './node1/'
+execution_dir_2 = './node2/'
 
-solution_path = '/18441_project3/solution/tcpserver.py'
+solution_path = '../solution/tcpserver.py'
 
 print("===> Setup Connection")
 

@@ -9,7 +9,6 @@ TIMEOUT     = 0.5
 
 class Server():
     def __init__(self, config_file):
-        print(f"CWD={os.getcwd()}, config={config_file}, abspath={os.path.abspath(config_file)}", flush=True)
         self.base_dir = os.path.dirname(os.path.abspath(config_file))
 
         with open(config_file, "r") as f:
@@ -20,41 +19,41 @@ class Server():
         self.peer_count   = config["peers"]
         self.content_info = config["content_info"]
         self.peer_info    = config["peer_info"]
-
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(("127.0.0.1", self.port))
-        self.sock.settimeout(0.2)
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind(("127.0.0.1", self.port))
+        self.server_socket.settimeout(0.5)
 
         self.remain_threads = True
 
-        self._sessions      = {}   # tid -> queue.Queue
-        self._sessions_lock = threading.Lock()
+        # fields to support concurrent requests
+
+        self.sessions      = {}   # tid -> queue.Queue
+        self.sessions_lock = threading.Lock()
         self._active_tx     = set()  # set of (file, addr) being served
         self._active_tx_lock = threading.Lock()
 
         self.cli()
-
+        return
     # helper functions
 
-    def _send(self, pkt, addr):
+    def _send(self, packet, addr):
         try:
-            self.sock.sendto(json.dumps(pkt).encode(), addr)
-            print(f"[send] sent {pkt.get('type')} to {addr}", flush=True)
-        except OSError as e:
-            print(f"[send] ERROR: {e}", flush=True)
+            self.server_socket.sendto(json.dumps(packet).encode(), addr)
+        except socket.timeout:
+            pass
 
     def _new_session(self, tid=None):
         if tid is None:
             tid = uuid.uuid4().hex[:8]
         q = queue.Queue()
-        with self._sessions_lock:
-            self._sessions[tid] = q
+        with self.sessions_lock:
+            self.sessions[tid] = q
         return tid, q
 
     def _close_session(self, tid):
-        with self._sessions_lock:
-            self._sessions.pop(tid, None)
+        with self.sessions_lock:
+            self.sessions.pop(tid, None)
 
 
     ##
@@ -66,57 +65,75 @@ class Server():
         return None, None
 
 
-    def listener(self):
-        print(f"[listener] started on port {self.port}", flush=True)
-        while self.remain_threads:
+
+
+
+
+    def load_file(self, file_name):
+        hostname, port = self.find_file(file_name)
+
+        peer_addr = (hostname, port)
+        tid, q    = self._new_session()
+        SYN_packet   = {"type": "SYN", "file": file_name, "tid": tid}
+
+        packet_num = None
+
+
+        # inititate three way handshake and also get the number of packets
+
+        while packet_num is None and self.remain_threads:
+            self._send(SYN_packet, peer_addr)
             try:
-                raw, addr = self.sock.recvfrom(BUFSIZE)
-                print(f"[listener] received {len(raw)} bytes from {addr}", flush=True)
-            except socket.timeout:
+                pkt, _ = q.get(timeout=TIMEOUT)
+                if pkt.get("type") == "COUNT":
+                    packet_num = pkt["count"]
+                    self._send({"type": "COUNT-ACK", "tid": tid}, peer_addr)
+            except queue.Empty:
                 continue
-            except OSError:
-                break
+
+        if packet_num is None:
+            self._close_session(tid)
+            return
+
+        received   = {}
+        fin_seen   = False
+        last_reack = time.time()
+
+        while len(received) < packet_num and self.remain_threads:
+            now = time.time()
+            if now - last_reack > TIMEOUT:
+                for seq in list(received.keys()):
+                    self._send({"type": "ACK", "seq": seq, "tid": tid}, peer_addr)
+                last_reack = now
 
             try:
-                pkt = json.loads(raw.decode())
-            except Exception:
+                pkt, _ = q.get(timeout=TIMEOUT)
+            except queue.Empty:
+                if fin_seen:
+                    break
                 continue
 
-            ptype = pkt.get("type", "")
-
-            print(f"[listener] got ptype={ptype} from {addr}", flush=True)
-
-            if ptype == "REQUEST":
-                tid       = pkt["tid"]
-                file_name = pkt["file"]
-                key       = (file_name, addr, tid)
-
-                with self._active_tx_lock:
-                    already = tid in self._active_tx
-                    if not already:
-                        self._active_tx.add(tid)
-
-                if already:
-                    continue
-
-                with self._sessions_lock:
-                    self._sessions[tid] = queue.Queue()
-
-                t = threading.Thread(
-                    target=self.transmit,
-                    args=(file_name, addr, tid),
-                    daemon=True
-                )
-                t.start()
+            ptype = pkt.get("type")
+            if ptype == "FIN":
+                fin_seen = True
+                #break
+                continue
+            if ptype != "DATA":
                 continue
 
-            tid = pkt.get("tid")
-            if tid is None:
-                continue
-            with self._sessions_lock:
-                q = self._sessions.get(tid)
-            if q is not None:
-                q.put((pkt, addr))
+            seq = pkt.get("seq", -1)
+            if seq not in received:
+                received[seq] = bytes.fromhex(pkt["data"])
+            self._send({"type": "ACK", "seq": seq, "tid": tid}, peer_addr)
+
+        self._close_session(tid)
+
+
+        # Write to same directory as the config file
+        out_path = os.path.join(self.base_dir, file_name)
+        with open(out_path, "wb") as f:
+            for i in range(packet_num):
+                f.write(received[i])
 
 
     def read_file(self, file_name):
@@ -133,10 +150,12 @@ class Server():
                 seq += 1
         return out
 
+
+
     def transmit(self, file_name, addr, tid):
-        print(f"[transmit] started for {file_name}", flush=True)
-        with self._sessions_lock:
-            q = self._sessions.get(tid)
+        #print(f"[transmit] started for {file_name}")
+        with self.sessions_lock:
+            q = self.sessions.get(tid)
         if q is None:
             return
 
@@ -223,74 +242,59 @@ class Server():
             self._active_tx.discard(tid)
 
 
-    def load_file(self, file_name):
-        hostname, port = self.find_file(file_name)
-        print(f"[load_file] {file_name} -> {hostname}:{port}", flush=True)
-        if hostname is None:
-            print(f"File {file_name} not found in any peer.")
-            return
-
-        peer_addr = (hostname, port)
-        tid, q    = self._new_session()
-        req_pkt   = {"type": "REQUEST", "file": file_name, "tid": tid}
-
-        packet_num = None
-        while packet_num is None and self.remain_threads:
-            self._send(req_pkt, peer_addr)
+    def listener(self):
+        while self.remain_threads:
             try:
-                pkt, _ = q.get(timeout=TIMEOUT)
-                if pkt.get("type") == "COUNT":
-                    packet_num = pkt["count"]
-                    self._send({"type": "COUNT-ACK", "tid": tid}, peer_addr)
-            except queue.Empty:
+                raw, addr = self.server_socket.recvfrom(BUFSIZE)
+                #print(f"[listener] received {len(raw)} bytes from {addr}")
+            except socket.timeout:
                 continue
-
-        if packet_num is None:
-            self._close_session(tid)
-            return
-
-        received   = {}
-        fin_seen   = False
-        last_reack = time.time()
-
-        while len(received) < packet_num and self.remain_threads:
-            now = time.time()
-            if now - last_reack > TIMEOUT:
-                for seq in list(received.keys()):
-                    self._send({"type": "ACK", "seq": seq, "tid": tid}, peer_addr)
-                last_reack = now
+            except OSError:
+                break
 
             try:
-                pkt, _ = q.get(timeout=TIMEOUT)
-            except queue.Empty:
-                if fin_seen:
-                    break
+                pkt = json.loads(raw.decode())
+            except Exception:
                 continue
 
-            ptype = pkt.get("type")
-            if ptype == "FIN":
-                fin_seen = True
-                #break
+            ptype = pkt.get("type", "")
+
+            #print(f"[listener] got ptype={ptype} from {addr}", flush=True)
+
+            if ptype == "SYN":
+                tid       = pkt["tid"]
+                file_name = pkt["file"]
+                key       = (file_name, addr, tid)
+
+                with self._active_tx_lock:
+                    already = tid in self._active_tx
+                    if not already:
+                        self._active_tx.add(tid)
+
+                if already:
+                    continue
+
+                with self.sessions_lock:
+                    self.sessions[tid] = queue.Queue()
+
+                t = threading.Thread(
+                    target=self.transmit,
+                    args=(file_name, addr, tid),
+                    daemon=True
+                )
+                t.start()
                 continue
-            if ptype != "DATA":
+
+            tid = pkt.get("tid")
+            if tid is None:
                 continue
+            with self.sessions_lock:
+                q = self.sessions.get(tid)
+            if q is not None:
+                q.put((pkt, addr))
 
-            seq = pkt.get("seq", -1)
-            if seq not in received:
-                received[seq] = bytes.fromhex(pkt["data"])
-            self._send({"type": "ACK", "seq": seq, "tid": tid}, peer_addr)
 
-        self._close_session(tid)
 
-        if len(received) < packet_num:
-            print(f"Incomplete: {len(received)}/{packet_num} for {file_name}")
-            return
-
-        # Write to same directory as the config file
-        out_path = os.path.join(self.base_dir, file_name)
-        with open(out_path, "wb") as f:
-            for i in range(packet_num):
-                f.write(received[i])
 
 
     def cli(self):
@@ -307,7 +311,7 @@ class Server():
             if cmd == "kill":
                 self.remain_threads = False
                 try:
-                    self.sock.close()
+                    self.server_socket.close()
                 except OSError:
                     pass
                 break

@@ -9,14 +9,14 @@ print()
 print("=" * 100)
 print("===> Test case 4.1. Concurrently transferring 5 large files without packet loss")
 
-execution_dir_1 = '/18441_project3/localtest/node1/'
-execution_dir_2 = '/18441_project3/localtest/node2/'
-execution_dir_3 = '/18441_project3/localtest/node3/'
-execution_dir_4 = '/18441_project3/localtest/node4/'
-execution_dir_5 = '/18441_project3/localtest/node5/'
-execution_dir_6 = '/18441_project3/localtest/node6/'
+execution_dir_1 = './node1/'
+execution_dir_2 = './node2/'
+execution_dir_3 = './node3/'
+execution_dir_4 = './node4/'
+execution_dir_5 = './node5/'
+execution_dir_6 = './node6/'
 
-solution_path = '/18441_project3/solution/tcpserver.py'
+solution_path = '../solution/tcpserver.py'
 
 print("===> Setup Connection")
 
