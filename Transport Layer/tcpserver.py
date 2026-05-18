@@ -33,10 +33,9 @@ class Server():
         self.server_socket.settimeout(TIMEOUT)   # timeout value
 
         # for concurrent requests to handle thread synchronization
-        self.sessions = {}
+        self.sessions = {} # organize for each client with their own packets
         self.sessions_lock = threading.Lock()
-        self.active_tx = set() # set of tuple (file, address)
-        self.active_tx_lock = threading.Lock()
+
 
         self.remain_threads = True
         self.cli()
@@ -100,20 +99,9 @@ class Server():
         # the receiver keeps a record for which part has been acked
         recieved = {}
         FIN_recieved = False # flag where client says that they have recieved all their data
-        previous_time = time.time()
 
         # start receiving file
         while len(recieved) < packet_num and self.remain_threads:
-            current_time = time.time()
-            if (current_time - previous_time > TIMEOUT):
-                for sequence in list(recieved.keys()):
-                    ACK_packet = {
-                        "type": "ACK",
-                        "sequence_number" : sequence, # sequence is the index
-                        "transaction_id" : transaction_id
-                    }
-                    self.send(ACK_packet, addr)
-                previous_time = current_time
             try:
                 packet, recieved_addr2 = q.get(timeout=TIMEOUT)
             except queue.Empty:
@@ -145,11 +133,7 @@ class Server():
         with open(destination_address, "wb") as f:
             for i in range(packet_num):
                 f.write(recieved[i])
-        
-
-
-
-        # write the file
+   
         
     def read_file(self, file_name):
         transmit_file = []
@@ -167,7 +151,6 @@ class Server():
                 }
                 transmit_file.append(DATA_packet)
                 seq += 1
-        #You can write a function that takes the file to be transmitted and converts into chunks of packet_size
         return transmit_file
 
     def transmit(self, file_name, addr, transaction_id):
@@ -199,29 +182,9 @@ class Server():
         timeout_array = [0] * packet_num # 0 = not transmitted, -1 = recieved, anything postive = time of trans.
         left = 0
         lock = threading.Lock()
-        finished = threading.Event() # for synchronization
-
-
-        # create a udp socket for transmission
-        # divide the file into several parts
-        #transmit_file = self.read_file(file_name)
-        #packet_num = len(transmit_file)
-        # use socket to send packet number to the receiver
-        #ack = 0
-        #print("sending packet num", packet_num, "to", addr)
-        # tx_socket.sendto(str(packet_num).encode(), addr)
-        # try:
-        #     #Receive ACK from the same tx_socket and increment window
-        # except socket.timeout:
-        #     pass
-        # # use a transmit window to determine which file should be transmitted
-
-        # # use a time-out array to record which file is time-out and need to be transmitted again
-        # # -1 indicates received, 0 indicates not transmitted, positive numbers means the time of transmission
-        
         def transmit_thread():
             nonlocal left
-            while not finished.is_set() and self.remain_threads:
+            while self.remain_threads:
                 current_time = time.time()
                 with lock:
                     for i in range(left, min(left + WINDOW_SIZE, packet_num)):
@@ -237,14 +200,13 @@ class Server():
                             self.send(packet, addr)
                             timeout_array[i] = current_time
                 time.sleep(.001)
-
             #Takes the transmit window and transmits every packet that is allowed to be transmitted
             return
         
         def ack_thread():
             #Receives acknowledgement and updates the transmit window with sendable packets
             nonlocal left
-            while not finished.is_set() and self.remain_threads:
+            while self.remain_threads:
                 try:
                     packet, _ = q.get(timeout=TIMEOUT)
                 except queue.Empty:
@@ -260,8 +222,7 @@ class Server():
 
                     while left < packet_num and timeout_array[left] == -1:
                         left += 1
-                    if left >= packet_num:
-                        finished.set() # alert all threads finished state
+
 
         tx_thread = threading.Thread(target=transmit_thread)
         ak_thread = threading.Thread(target = ack_thread)
@@ -272,9 +233,8 @@ class Server():
         while left < packet_num and self.remain_threads:
             time.sleep(.01)
 
-        finished.set()
-        tx_thread.join(TIMEOUT)
-        ak_thread.join(TIMEOUT)
+        tx_thread.join()
+        ak_thread.join()
 
         FIN_packet = {
             "type" : "FIN",
@@ -287,14 +247,8 @@ class Server():
             self.send(FIN_packet, addr)
             time.sleep(.001)
 
-        # clean up proc.
         self.close_session(transaction_id)
-        with self.active_tx_lock:
-            self.active_tx.discard(transaction_id)
-
-        #Create TX and RX threads and start doing it
-
-        #When done transmitting, close the threads.
+    
 
     def listener(self): # listen to the socket to see if there's any transmission request
         #Do any initializations that you want
@@ -318,12 +272,9 @@ class Server():
             if packet["type"] == "SYN":
                 file_name = packet["file"]
 
-                with self.active_tx_lock:
-                    if transaction_id in self.active_tx:
-                        continue
-                    self.active_tx.add(transaction_id)
-                
                 with self.sessions_lock:
+                    if transaction_id in self.sessions:
+                        continue
                     self.sessions[transaction_id] = queue.Queue()
                 
                 tx_thread = threading.Thread(target = self.transmit, args = (file_name, addr, transaction_id))
@@ -339,7 +290,7 @@ class Server():
         return
     
     def cli(self):  # cli interface for input of the file name
-        listen_thread = threading.Thread(target=self.listener,daemon = True)
+        listen_thread = threading.Thread(target=self.listener)
         listen_thread.start()
 
         while self.remain_threads:
@@ -357,10 +308,10 @@ class Server():
                 break
                 
             else:
-                start_thread = threading.Thread(target=self.load_file, args=(command_line,), daemon = True)
+                start_thread = threading.Thread(target=self.load_file, args=(command_line,))
                 start_thread.start()
         
-        listen_thread.join(TIMEOUT)
+        listen_thread.join()
         
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ TIMEOUT = 20
 
 FILENAME = 'trailer_400p.ogg'
 
-Packet_Drop_Probability = 0.01 # 1%
+Packet_Drop_Probability = .10 #0.01 # 1%
 
 print()
 print("=" * 100)
