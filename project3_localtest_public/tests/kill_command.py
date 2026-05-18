@@ -21,7 +21,7 @@ def kill_command():
         for pid in pid_list:
             # print(pid)
             os.kill(int(pid), signal.SIGTERM)
-        # print("[kill success]")
+        print("[kill success]")
     except:
         print("[kill run_switchd fail]")
         traceback.print_exc()

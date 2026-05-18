@@ -6,7 +6,7 @@ import os
 import uuid
 import queue
 
-BUFSIZE = 10202  # size of receiving buffer
+BUFSIZE = 102400  # size of receiving buffer
 PKTSIZE = 10200  # number of bytes in a packet
 WINDOW_SIZE = 16
 IDX_LENGTH = 2 # 2 bytes of packet index
@@ -49,7 +49,7 @@ class Server():
             pass
 
     # helper function to support concurrency
-    def new_session(self, transaction_id):
+    def new_session(self, transaction_id = None):
         if transaction_id is None:
             transaction_id = uuid.uuid4().hex[:8] # 7 bit unique transaction id for each client(s)
         q = queue.Queue() # use this instead of a list because queue module in python is thread safe
@@ -59,7 +59,7 @@ class Server():
 
     def close_session(self, transaction_id):
         with self.sessions_lock:
-            del self.sessions["transaction_id"]
+            del self.sessions[transaction_id]
 
     
     def find_file(self, file_name):
@@ -92,7 +92,7 @@ class Server():
                         "transaction_id" : transaction_id
                     }
                     self.send(COUNT_ACK_packet, addr)
-            except socket.timeout:
+            except queue.Empty:
                 continue
         
 
@@ -117,7 +117,7 @@ class Server():
             try:
                 packet, recieved_addr2 = q.get(timeout=TIMEOUT)
             except queue.Empty:
-                if FIN_recieved:
+                if FIN_recieved and len(recieved) == packet_num:
                     break
                 else:
                     continue
@@ -162,7 +162,7 @@ class Server():
                     break
                 DATA_packet = {
                     "type": "DATA",
-                    "seq" : seq,
+                    "sequence_number" : seq,
                     "data" : chunk.hex() # because JSON does not natively handle binary data
                 }
                 transmit_file.append(DATA_packet)
@@ -172,7 +172,7 @@ class Server():
 
     def transmit(self, file_name, addr, transaction_id):
         with self.sessions_lock:
-            q = self.sessions_lock.get(transaction_id)
+            q = self.sessions.get(transaction_id)
         if q is None: 
             return
 
@@ -236,7 +236,7 @@ class Server():
                             packet["transaction_id"] = transaction_id
                             self.send(packet, addr)
                             timeout_array[i] = current_time
-                time.sleep(.01)
+                time.sleep(.001)
 
             #Takes the transmit window and transmits every packet that is allowed to be transmitted
             return
@@ -258,7 +258,7 @@ class Server():
                     if 0 <= sequence_number < packet_num:
                         timeout_array[sequence_number] = -1
 
-                    while left < packet_num and timeout_array[left] != 0:
+                    while left < packet_num and timeout_array[left] == -1:
                         left += 1
                     if left >= packet_num:
                         finished.set() # alert all threads finished state
@@ -269,9 +269,12 @@ class Server():
         tx_thread.start()
         ak_thread.start()
 
+        while left < packet_num and self.remain_threads:
+            time.sleep(.01)
+
         finished.set()
-        tx_thread.join()
-        ak_thread.join()
+        tx_thread.join(TIMEOUT)
+        ak_thread.join(TIMEOUT)
 
         FIN_packet = {
             "type" : "FIN",
@@ -287,7 +290,7 @@ class Server():
         # clean up proc.
         self.close_session(transaction_id)
         with self.active_tx_lock:
-            self.active_tx.disacrd(transaction_id)
+            self.active_tx.discard(transaction_id)
 
         #Create TX and RX threads and start doing it
 
@@ -305,39 +308,46 @@ class Server():
             
             if file_name == "":
                 pass
-            else:   # start transmission
-                #Create a transmit thread (HINT : you can have a large array of transmit threads if you want) and start it
+            # start transmission
+            #Create a transmit thread (HINT : you can have a large array of transmit threads if you want) and start it
+            try:
                 packet = json.loads(file_name.decode())
-                if packet["type"] == "SYN":
-                    transaction_id = packet["transaction_id"]
-                    file_name = packet["file"]
+            except Exception:
+                continue
+            transaction_id = packet["transaction_id"]
+            if packet["type"] == "SYN":
+                file_name = packet["file"]
 
-                    with self.active_tx_lock:
-                        if transaction_id in self.active_tx:
-                            continue
-                        self.active_tx.add(transaction_id)
-                    
-                    with self.sessions_lock:
-                        self.sessions[transaction_id] = queue.Queue()
-                    
-                    tx_thread = threading.Thread(tarrget = self.transmit, args = (file_name, addr, transaction_id))
-                    tx_thread.start()
-                    continue
-            
+                with self.active_tx_lock:
+                    if transaction_id in self.active_tx:
+                        continue
+                    self.active_tx.add(transaction_id)
+                
                 with self.sessions_lock:
-                    q = self.sessions["transaction_id"]
-                if q is not None:
-                    q.put((packet, addr))
+                    self.sessions[transaction_id] = queue.Queue()
+                
+                tx_thread = threading.Thread(target = self.transmit, args = (file_name, addr, transaction_id))
+                tx_thread.start()
+                continue
+            
+            with self.sessions_lock:
+                q = self.sessions.get(transaction_id)
+            if q is not None:
+                q.put((packet, addr))
 
                 
         return
     
     def cli(self):  # cli interface for input of the file name
-        listen_thread = threading.Thread(target=self.listener)
+        listen_thread = threading.Thread(target=self.listener,daemon = True)
         listen_thread.start()
 
         while self.remain_threads:
-            command_line = input()
+            try:
+                command_line = input()
+            except EOFError:
+                break
+            command_line = command_line.strip()
             if command_line == "kill":  # for debugging purpose
                 self.remain_threads = False
                 try:
@@ -345,12 +355,13 @@ class Server():
                 except socket.timeout:
                     pass
                 break
+                
             else:
-                start_thread = threading.Thread(target=self.load_file, args=(command_line))
+                start_thread = threading.Thread(target=self.load_file, args=(command_line,), daemon = True)
                 start_thread.start()
         
-        listen_thread.join()
-        return
+        listen_thread.join(TIMEOUT)
+        
 
 if __name__ == "__main__":
     server = Server(sys.argv[1])
