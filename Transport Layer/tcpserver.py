@@ -11,7 +11,7 @@ PKTSIZE = 10200  # number of bytes in a packet
 WINDOW_SIZE = 16
 IDX_LENGTH = 2 # 2 bytes of packet index
 TIMEOUT = 0.5   # timeout time
-
+# here
 class Server():
     def __init__(self, config_file):
         self.base_directory = os.path.dirname(os.path.abspath(config_file))
