@@ -49,11 +49,22 @@ class Vod_Server():
     def handler(self, connection_socket, client_addr):
         try:
             while True:
-                msg_string = connection_socket.recv(BUFSIZE).decode()
-                if not msg_string: break
+                try:
+                    raw = b""
+                    while b"\r\n\r\n" not in raw:
+                        chunk = connection_socket.recv(BUFSIZE)
+                        if not chunk: return
+                        raw += chunk
+                    msg_string = raw.decode()
+                    keep_alive = self.response(msg_string, connection_socket)
+                    if not keep_alive: return
+                except socket.timeout: return
+                
+                # msg_string = connection_socket.recv(BUFSIZE).decode()
+                # if not msg_string: break
 
-                keep_alive = self.response(msg_string, connection_socket)
-                if not keep_alive: break
+                # keep_alive = self.response(msg_string, connection_socket)
+                # if not keep_alive: break
 
         except Exception as e:
             pass
@@ -213,8 +224,12 @@ class Vod_Server():
         command_dict = {}
         for item in commands[1:]:
             item = item.rstrip()
-            splitted_item = item.split(":")
-            command_dict[splitted_item[0]] = splitted_item[1].strip()
+            if not item: continue
+            if ":" not in item: continue
+            key, val = item.split(":", 1)
+            command_dict[key.strip()] = val.strip()
+            #splitted_item = item.split(":")
+            #command_dict[splitted_item[0]] = splitted_item[1].strip()
         return command_dict
 
 if __name__ == "__main__":
